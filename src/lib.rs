@@ -1,0 +1,358 @@
+//! # autogen
+//!
+//! Tired of repeating all the generics in every `impl` block?
+//!
+//! Autogen is a set of macros that allows you to automatically apply generics to `impl` blocks.
+//! - the [register] macro registers the generics of a `struct` or `enum`, including lifetimes and
+//! the where clause.
+//! - the [apply] macro applies the generics to an `impl` block.
+//! ```
+//! #[autogen::register]
+//! struct Struct<'a, T, R: ?Sized>
+//! where
+//!     T: PartialEq,
+//! {
+//!     x: T,
+//!     y: &'a R,
+//! }
+//!
+//! #[autogen::apply]
+//! impl Struct {}
+//! ```
+//! This will expand to:
+//! ```
+//! # #[autogen::register]
+//! # struct Struct<'a, T, R: ?Sized>
+//! # where
+//! #     T: PartialEq,
+//! # {
+//! #     x: T,
+//! #     y: &'a R,
+//! # }
+//! impl<'a, T, R: ?Sized> Struct<'a, T, R> where T: PartialEq {}
+//! ```
+//! For more examples see the [register] and [apply] docs.
+mod generics;
+mod unique_vec;
+
+use proc_macro::TokenStream;
+use quote::{ToTokens, TokenStreamExt};
+use syn::{
+    parse2, parse_macro_input, spanned::Spanned, Error, Generics, Ident, Item, ItemImpl, Result,
+    Type, TypePath, TypeTuple,
+};
+
+use crate::{
+    generics::{find_generics, register_generics},
+    unique_vec::UniqueVec,
+};
+
+/// This macro is used to register the generics of a `struct` or `enum` that can later be appied to
+/// an `impl` block with the [apply] macro.
+///
+/// # Examples
+///
+/// ```
+/// #[autogen::register]
+/// struct Struct<'a, T, R: ?Sized>
+/// where
+///     T: PartialEq,
+/// {
+///     x: T,
+///     y: &'a R,
+/// }
+///
+/// #[autogen::apply]
+/// impl Struct {
+///     fn x_equals(&self, other: &T) -> bool {
+///         &self.x == other
+///     }
+///     fn y(&self) -> &R {
+///         self.y
+///     }
+/// }
+///
+/// let s = Struct { x: 1, y: "abc" };
+/// assert!(s.x_equals(&1));
+/// assert_eq!(s.y(), "abc");
+///
+/// #[autogen::register]
+/// enum Enum<T, Y> {
+///     V1(T),
+///     V2(Y),
+/// }
+///
+/// #[autogen::apply]
+/// impl Enum {
+///     fn same_variant_as(&self, other: Self) -> bool {
+///         match self {
+///             Self::V1(_) => matches!(other, Self::V1(_)),
+///             Self::V2(_) => matches!(other, Self::V2(_)),
+///         }
+///     }
+/// }
+///
+/// let e1 = Enum::<&str, u32>::V1("a");
+/// let e2 = Enum::<&str, u32>::V1("b");
+/// let e3 = Enum::<&str, u32>::V2(0);
+///
+/// assert!(e1.same_variant_as(e2));
+/// assert!(!e1.same_variant_as(e3));
+///
+/// ```
+/// By default, the generics are registered with the struct/enum name, but you can provide a
+/// custom identifier. This can be useful if a type with the same name is already registered in
+/// another module.
+///
+/// This will not compile because `Name` is already registered.
+/// ```compile_fail
+/// #[autogen::register]
+/// struct Name<T: PartialEq> {
+///     t: T,
+/// }
+///
+/// mod sub {
+///     #[autogen::register]
+///     pub struct Name<S: FromStr> {
+///         s: S,
+///     }
+/// }
+/// ```
+///
+/// To resolve this, you must provide a custom identifier.
+/// ```
+/// #[autogen::register]
+/// struct Name<T: PartialEq> {
+///     t: T,
+/// }
+///
+/// #[autogen::apply]
+/// impl Name {
+///     fn t(&self) -> &T {
+///         &self.t
+///     }
+/// }
+///
+/// mod sub {
+///     use std::str::FromStr;
+///
+///     #[autogen::register(CustomName)]
+///     pub struct Name<S: FromStr> {
+///         s: S,
+///     }
+///
+///     #[autogen::apply(CustomName)]
+///     impl Name {
+///         pub fn parse(string: &str) -> Result<Self, S::Err> {
+///             Ok(Name { s: string.parse()? })
+///         }
+///         pub fn s(&self) -> &S {
+///             &self.s
+///         }
+///     }
+/// }
+///
+/// let s1 = Name { t: 64 };
+/// assert_eq!(s1.t(), &64);
+///
+/// let s2 = sub::Name::<u32>::parse("123").unwrap();
+/// assert_eq!(s2.s(), &123);
+/// ```
+#[proc_macro_attribute]
+pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
+    let custom_id = if args.is_empty() {
+        None
+    } else {
+        Some(parse_macro_input!(args as Ident))
+    };
+
+    let item = parse_macro_input!(original as Item);
+    register_generics(item, custom_id).unwrap_or_else(|err| err.to_compile_error().into())
+}
+
+/// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
+/// the [register] macro to an `impl` block.
+///
+/// # Examples
+///
+/// ```
+/// #[autogen::register]
+/// struct Struct<'a, T, R: ?Sized>
+/// where
+///     T: PartialEq,
+/// {
+///     x: T,
+///     y: &'a R,
+/// }
+///
+/// #[autogen::apply]
+/// impl Struct {
+///     fn x_equals(&self, other: &T) -> bool {
+///         &self.x == other
+///     }
+///     fn y(&self) -> &'a R {
+///         self.y
+///     }
+/// }
+///
+/// trait Trait {
+///     fn type_of(&self) -> &'static str;
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for Struct {
+///     fn type_of(&self) -> &'static str {
+///         "regular"
+///     }
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for [Struct; 2] {
+///     fn type_of(&self) -> &'static str {
+///         "array of size 2"
+///     }
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for [Struct] {
+///     fn type_of(&self) -> &'static str {
+///         "slice"
+///     }
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for &Struct {
+///     fn type_of(&self) -> &'static str {
+///         "reference"
+///     }
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for *const Struct {
+///     fn type_of(&self) -> &'static str {
+///         "pointer"
+///     }
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for (Struct, &'static str, Struct) {
+///     fn type_of(&self) -> &'static str {
+///         "tuple"
+///     }
+/// }
+///
+/// let struct1 = Struct { x: 1, y: "abc" };
+/// assert!(struct1.x_equals(&1));
+/// assert_eq!(struct1.y(), "abc");
+///
+/// assert_eq!(struct1.type_of(), "regular");
+/// assert_eq!((&&struct1).type_of(), "reference");
+///
+/// let pointer = &struct1 as *const Struct<'_, i32, str>;
+/// assert_eq!(pointer.type_of(), "pointer");
+///
+/// let struct2 = Struct { x: 2, y: "xyz" };
+/// assert!(struct2.x_equals(&2));
+/// assert_eq!(struct2.y(), "xyz");
+///
+/// let tuple = (struct1, "string", struct2);
+/// assert_eq!(tuple.type_of(), "tuple");
+///
+/// let array = [tuple.0, tuple.2];
+/// assert_eq!(array.type_of(), "array of size 2");
+/// assert_eq!(array[..].type_of(), "slice");
+/// ```
+/// The only restriction with tuples is that you cannot use different registered types in one
+/// tuple. This will not compile.
+/// ```compile_fail
+/// #[autogen::register]
+/// struct Struct1<X> {
+///     x: X,
+/// }
+///
+/// #[autogen::register]
+/// struct Struct2<Y> {
+///     y: Y,
+/// }
+///
+/// trait Trait {}
+///
+/// #[autogen::apply]
+/// impl Trait for (Struct1, Struct2) {}
+///
+/// ```
+/// To learn how to apply generics with a custom identifier, see the [register] macro docs.
+#[proc_macro_attribute]
+pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
+    let custom_id = if args.is_empty() {
+        None
+    } else {
+        Some(parse_macro_input!(args as Ident))
+    };
+
+    let mut item = parse_macro_input!(original as ItemImpl);
+    match expand_types(item.self_ty.as_mut(), custom_id.as_ref()) {
+        Ok(generics) => {
+            item.generics = generics;
+            item.to_token_stream().into()
+        }
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
+    match ty {
+        Type::Array(ty) => expand_types(ty.elem.as_mut(), custom_id),
+        Type::Path(ty) => expand_path(ty, custom_id),
+        Type::Ptr(ty) => expand_types(ty.elem.as_mut(), custom_id),
+        Type::Reference(ty) => expand_types(ty.elem.as_mut(), custom_id),
+        Type::Slice(ty) => expand_types(ty.elem.as_mut(), custom_id),
+        Type::Tuple(ty) => expand_tuple(ty, custom_id),
+        other => Err(Error::new(
+            other.span(),
+            format!("cannot apply generics to {}", other.to_token_stream()),
+        )),
+    }
+}
+
+fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Result<Generics> {
+    let ident = custom_id.unwrap_or_else(|| {
+        // don't use `get_ident()` to be able to expand types from a different module
+        &ty.path
+            .segments
+            .last()
+            .expect("a path has to have at least one segment")
+            .ident
+    });
+    let generics = find_generics(ident)?;
+    let ty_generics = generics.split_for_impl().1;
+    let mut path = ty.path.to_token_stream();
+    path.append_all(ty_generics.to_token_stream());
+    // if it cannot be parsed, it usually means that the type has manually set generics
+    if let Ok(path) = parse2(path) {
+        ty.path = path;
+    }
+    Ok(generics)
+}
+
+fn expand_tuple(ty: &mut TypeTuple, custom_id: Option<&Ident>) -> Result<Generics> {
+    let mut vec: UniqueVec<_> = ty
+        .elems
+        .iter_mut()
+        .flat_map(|elem| expand_types(elem, custom_id))
+        .collect();
+
+    if vec.len() > 1 {
+        Err(Error::new(
+            ty.span(),
+            "applying generics to a tuple with different registered types is not supported",
+        ))
+    } else {
+        vec.pop().ok_or_else(|| {
+            Error::new(
+                ty.span(),
+                "cannot apply generics to this tuple because none of its elements are registered",
+            )
+        })
+    }
+}
