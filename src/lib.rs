@@ -3,9 +3,9 @@
 //! Tired of repeating all the generics in every `impl` block?
 //!
 //! Autogen is a set of macros that allows you to automatically apply generics to `impl` blocks.
-//! - the [register] macro registers the generics of a `struct` or `enum`, including lifetimes and
-//! the where clause.
-//! - the [apply] macro applies the generics to an `impl` block.
+//! - the [register](register) macro registers the generics of a `struct` or `enum`,
+//! including lifetimes and the where clause.
+//! - the [apply](apply) macro applies the generics to an `impl` block.
 //! ```
 //! #[autogen::register]
 //! struct Struct<'a, T, R: ?Sized>
@@ -31,15 +31,17 @@
 //! # }
 //! impl<'a, T, R: ?Sized> Struct<'a, T, R> where T: PartialEq {}
 //! ```
-//! For more examples see the [register] and [apply] docs.
+//! For more examples see the [register](register) and [apply](apply) docs.
 mod generics;
 mod unique_vec;
+
+use core::panic;
 
 use proc_macro::TokenStream;
 use quote::{ToTokens, TokenStreamExt};
 use syn::{
-    parse2, parse_macro_input, spanned::Spanned, Error, Generics, Ident, Item, ItemImpl, Result,
-    Type, TypePath, TypeTuple,
+    parse2, parse_macro_input, spanned::Spanned, Error, GenericArgument, Generics, Ident, Item,
+    ItemImpl, PathArguments, Result, Type, TypePath, TypeTuple,
 };
 
 use crate::{
@@ -47,8 +49,8 @@ use crate::{
     unique_vec::UniqueVec,
 };
 
-/// This macro is used to register the generics of a `struct` or `enum` that can later be appied to
-/// an `impl` block with the [apply] macro.
+/// This macro is used to register the generics of a `struct` or `enum` that can later be applied to
+/// an `impl` block with the [apply](apply) macro.
 ///
 /// # Examples
 ///
@@ -100,6 +102,9 @@ use crate::{
 /// assert!(!e1.same_variant_as(e3));
 ///
 /// ```
+///
+/// ## Using a custom identifier
+///
 /// By default, the generics are registered with the struct/enum name, but you can provide a
 /// custom identifier. This can be useful if a type with the same name is already registered in
 /// another module.
@@ -171,7 +176,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 }
 
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
-/// the [register] macro to an `impl` block.
+/// the [register](register) macro to an `impl` block.
 ///
 /// # Examples
 ///
@@ -281,7 +286,8 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// impl Trait for (Struct1, Struct2) {}
 ///
 /// ```
-/// To learn how to apply generics with a custom identifier, see the [register] macro docs.
+/// To learn how to apply generics with a custom identifier, see the
+/// [register](register#using-a-custom-identifier) macro docs.
 #[proc_macro_attribute]
 pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     let custom_id = if args.is_empty() {
@@ -316,6 +322,9 @@ fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
 }
 
 fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Result<Generics> {
+    if let Some(result) = expand_generic_args(ty, custom_id) {
+        return result;
+    }
     let ident = custom_id.unwrap_or_else(|| {
         // don't use `get_ident()` to be able to expand types from a different module
         &ty.path
@@ -333,6 +342,32 @@ fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Result<Generics>
         ty.path = path;
     }
     Ok(generics)
+}
+
+fn expand_generic_args(ty: &mut TypePath, custom_id: Option<&Ident>) -> Option<Result<Generics>> {
+    let mut vec: UniqueVec<_> = ty
+        .path
+        .segments
+        .iter_mut()
+        .filter_map(|segment| match &mut segment.arguments {
+            PathArguments::AngleBracketed(args) => Some(args),
+            _ => None,
+        })
+        .flat_map(|args| &mut args.args)
+        .filter_map(|arg| match arg {
+            GenericArgument::Type(ty) => expand_types(ty, custom_id).ok(),
+            _ => None,
+        })
+        .collect();
+
+    if vec.len() > 1 {
+        Some(Err(Error::new(
+            ty.span(),
+            "different registered types found",
+        )))
+    } else {
+        vec.pop().map(Ok)
+    }
 }
 
 fn expand_tuple(ty: &mut TypeTuple, custom_id: Option<&Ident>) -> Result<Generics> {
