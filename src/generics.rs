@@ -78,7 +78,7 @@ pub(crate) fn register_generics(item: Item, custom_id: Option<Ident>) -> Result<
     }
 }
 
-pub(crate) fn find_generics(ident: &Ident) -> Result<Generics> {
+pub(crate) fn find_generics(ident: &Ident) -> Result<Option<Generics>> {
     let generics_vec = GENERICS.lock().map_err(|_| {
         Error::new(
             ident.span(),
@@ -86,9 +86,8 @@ pub(crate) fn find_generics(ident: &Ident) -> Result<Generics> {
         )
     })?;
     let name = ident.to_string();
-    generics_vec
+    Ok(generics_vec
         .iter()
         .find(|gen| gen.ident == name)
-        .map(|gen| gen.as_generics())
-        .ok_or_else(|| Error::new(ident.span(), format!("{name} is not registered")))
+        .map(|gen| gen.as_generics()))
 }

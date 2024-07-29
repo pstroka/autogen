@@ -28,13 +28,16 @@ This will expand to:
 ```rust
 impl<'a, T, R: ?Sized> Struct<'a, T, R> where T: PartialEq {}
 ```
-The generics can also be applied to:
-- arrays
-- slices
-- references
-- pointers
-- tuples (the only restriction is that the tuple cannot contain different registered types)
+Apart from the type itself, the generics can also be applied to:
+- arrays of the given type
+- slices of the given type
+- references of the given type
+- pointers of the given type
+- tuples containing the given type
+- other types containing the given type as a generic argument
+- a combination of all of the above
 
+The only restriction is that the `impl` block cannot contain different registered types.
 ```rust
 #[autogen::register]
 struct Struct<'a, T, R: ?Sized>
@@ -101,6 +104,20 @@ impl Trait for (Struct, &'static str, Struct) {
     }
 }
 
+#[autogen::apply]
+impl Trait for Result<Struct, String> {
+    fn type_of(&self) -> &'static str {
+        "generic argument"
+    }
+}
+
+#[autogen::apply]
+impl Trait for [([Option<&Struct>; 1], Struct, String)] {
+    fn type_of(&self) -> &'static str {
+        "crazy ****"
+    }
+}
+
 let struct1 = Struct { x: 1, y: "abc" };
 assert!(struct1.x_equals(&1));
 assert_eq!(struct1.y(), "abc");
@@ -121,6 +138,15 @@ assert_eq!(tuple.type_of(), "tuple");
 let array = [tuple.0, tuple.2];
 assert_eq!(array.type_of(), "array of size 2");
 assert_eq!(array[..].type_of(), "slice");
+
+let struct3 = Struct { x: -1, y: "b" };
+let result: Result<_, String> = Ok(struct3);
+assert_eq!(result.type_of(), "generic argument");
+
+let struct3 = result.unwrap();
+let struct4 = Struct { x: -2, y: "s" };
+let crazy = [([Some(&struct3)], struct4, "****".to_string())];
+assert_eq!(crazy[..].type_of(), "crazy ****");
 ```
 
 By default, the generics are registered with the struct/enum name, but you can provide a

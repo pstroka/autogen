@@ -35,8 +35,6 @@
 mod generics;
 mod unique_vec;
 
-use core::panic;
-
 use proc_macro::TokenStream;
 use quote::{ToTokens, TokenStreamExt};
 use syn::{
@@ -246,6 +244,20 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 ///     }
 /// }
 ///
+/// #[autogen::apply]
+/// impl Trait for Result<Struct, String> {
+///     fn type_of(&self) -> &'static str {
+///         "generic argument"
+///     }
+/// }
+///
+/// #[autogen::apply]
+/// impl Trait for [([Option<&Struct>; 1], Struct, String)] {
+///     fn type_of(&self) -> &'static str {
+///         "crazy ****"
+///     }
+/// }
+///
 /// let struct1 = Struct { x: 1, y: "abc" };
 /// assert!(struct1.x_equals(&1));
 /// assert_eq!(struct1.y(), "abc");
@@ -266,9 +278,18 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// let array = [tuple.0, tuple.2];
 /// assert_eq!(array.type_of(), "array of size 2");
 /// assert_eq!(array[..].type_of(), "slice");
+///
+/// let struct3 = Struct { x: -1, y: "b" };
+/// let result: Result<_, String> = Ok(struct3);
+/// assert_eq!(result.type_of(), "generic argument");
+///
+/// let struct3 = result.unwrap();
+/// let struct4 = Struct { x: -2, y: "s" };
+/// let crazy = [([Some(&struct3)], struct4, "****".to_string())];
+/// assert_eq!(crazy[..].type_of(), "crazy ****");
 /// ```
-/// The only restriction with tuples is that you cannot use different registered types in one
-/// tuple. This will not compile.
+/// The only restriction is that you cannot use different registered types in one `impl` block.
+/// This will not compile:
 /// ```compile_fail
 /// #[autogen::register]
 /// struct Struct1<X> {
@@ -284,7 +305,6 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 ///
 /// #[autogen::apply]
 /// impl Trait for (Struct1, Struct2) {}
-///
 /// ```
 /// To learn how to apply generics with a custom identifier, see the
 /// [register](register#using-a-custom-identifier) macro docs.
@@ -307,24 +327,50 @@ pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
 }
 
 fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
+    let results = expand_all_types(ty, custom_id);
+    let (ok, err): (Vec<_>, Vec<_>) = results.into_iter().partition(|result| result.is_ok());
+    let error = err
+        .into_iter()
+        .filter_map(|result| result.err())
+        .reduce(|mut l, r| {
+            l.combine(r);
+            l
+        });
+    if let Some(error) = error {
+        return Err(error);
+    }
+
+    let mut unique_results: UniqueVec<_> =
+        ok.into_iter().filter_map(|result| result.ok()).collect();
+
+    if unique_results.len() > 1 {
+        Err(Error::new(
+            ty.span(),
+            "applying generics to different registered types is not supported",
+        ))
+    } else {
+        unique_results
+            .pop()
+            .ok_or_else(|| Error::new(ty.span(), "no registered type found"))
+    }
+}
+fn expand_all_types(ty: &mut Type, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
     match ty {
-        Type::Array(ty) => expand_types(ty.elem.as_mut(), custom_id),
+        Type::Array(ty) => expand_all_types(ty.elem.as_mut(), custom_id),
         Type::Path(ty) => expand_path(ty, custom_id),
-        Type::Ptr(ty) => expand_types(ty.elem.as_mut(), custom_id),
-        Type::Reference(ty) => expand_types(ty.elem.as_mut(), custom_id),
-        Type::Slice(ty) => expand_types(ty.elem.as_mut(), custom_id),
+        Type::Ptr(ty) => expand_all_types(ty.elem.as_mut(), custom_id),
+        Type::Reference(ty) => expand_all_types(ty.elem.as_mut(), custom_id),
+        Type::Slice(ty) => expand_all_types(ty.elem.as_mut(), custom_id),
         Type::Tuple(ty) => expand_tuple(ty, custom_id),
-        other => Err(Error::new(
+        other => vec![Err(Error::new(
             other.span(),
             format!("cannot apply generics to {}", other.to_token_stream()),
-        )),
+        ))],
     }
 }
 
-fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Result<Generics> {
-    if let Some(result) = expand_generic_args(ty, custom_id) {
-        return result;
-    }
+fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
+    let mut vec = expand_generic_args(ty, custom_id);
     let ident = custom_id.unwrap_or_else(|| {
         // don't use `get_ident()` to be able to expand types from a different module
         &ty.path
@@ -333,20 +379,25 @@ fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Result<Generics>
             .expect("a path has to have at least one segment")
             .ident
     });
-    let generics = find_generics(ident)?;
-    let ty_generics = generics.split_for_impl().1;
-    let mut path = ty.path.to_token_stream();
-    path.append_all(ty_generics.to_token_stream());
-    // if it cannot be parsed, it usually means that the type has manually set generics
-    if let Ok(path) = parse2(path) {
-        ty.path = path;
+    if let Some(result) = find_generics(ident).transpose() {
+        if let Ok(generics) = result {
+            let ty_generics = generics.split_for_impl().1;
+            let mut path = ty.path.to_token_stream();
+            path.append_all(ty_generics.to_token_stream());
+            // if it cannot be parsed, it usually means that the type has manually set generics
+            if let Ok(path) = parse2(path) {
+                ty.path = path;
+                vec.push(Ok(generics));
+            }
+        } else {
+            vec.push(result);
+        }
     }
-    Ok(generics)
+    vec
 }
 
-fn expand_generic_args(ty: &mut TypePath, custom_id: Option<&Ident>) -> Option<Result<Generics>> {
-    let mut vec: UniqueVec<_> = ty
-        .path
+fn expand_generic_args(ty: &mut TypePath, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
+    ty.path
         .segments
         .iter_mut()
         .filter_map(|segment| match &mut segment.arguments {
@@ -355,39 +406,16 @@ fn expand_generic_args(ty: &mut TypePath, custom_id: Option<&Ident>) -> Option<R
         })
         .flat_map(|args| &mut args.args)
         .filter_map(|arg| match arg {
-            GenericArgument::Type(ty) => expand_types(ty, custom_id).ok(),
+            GenericArgument::Type(ty) => Some(ty),
             _ => None,
         })
-        .collect();
-
-    if vec.len() > 1 {
-        Some(Err(Error::new(
-            ty.span(),
-            "different registered types found",
-        )))
-    } else {
-        vec.pop().map(Ok)
-    }
+        .flat_map(|ty| expand_all_types(ty, custom_id))
+        .collect()
 }
 
-fn expand_tuple(ty: &mut TypeTuple, custom_id: Option<&Ident>) -> Result<Generics> {
-    let mut vec: UniqueVec<_> = ty
-        .elems
+fn expand_tuple(ty: &mut TypeTuple, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
+    ty.elems
         .iter_mut()
-        .flat_map(|elem| expand_types(elem, custom_id))
-        .collect();
-
-    if vec.len() > 1 {
-        Err(Error::new(
-            ty.span(),
-            "applying generics to a tuple with different registered types is not supported",
-        ))
-    } else {
-        vec.pop().ok_or_else(|| {
-            Error::new(
-                ty.span(),
-                "cannot apply generics to this tuple because none of its elements are registered",
-            )
-        })
-    }
+        .flat_map(|elem| expand_all_types(elem, custom_id))
+        .collect()
 }
