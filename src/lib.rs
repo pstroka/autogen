@@ -177,7 +177,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
     };
 
     let item = parse_macro_input!(original as Item);
-    register_generics(item, custom_id).unwrap_or_else(|err| err.to_compile_error().into())
+    register_generics(&item, custom_id).unwrap_or_else(|err| err.to_compile_error().into())
 }
 
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
@@ -356,9 +356,10 @@ fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
             "applying generics to different registered types is not supported",
         ))
     } else {
-        unique_results
-            .pop()
-            .ok_or_else(|| Error::new(ty.span(), "no registered type found"))
+        unique_results.pop().ok_or_else(|| match custom_id {
+            Some(id) => Error::new(ty.span(), format!("{id} is not registered")),
+            None => Error::new(ty.span(), "no registered type found"),
+        })
     }
 }
 fn expand_all_types(ty: &mut Type, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {

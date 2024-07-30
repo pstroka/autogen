@@ -14,49 +14,8 @@ struct GenericsItem {
     where_clause: Option<String>,
 }
 
-impl GenericsItem {
-    fn as_generics(&self) -> Generics {
-        let mut generics: Generics =
-            parse_str(&self.generics).expect("the parsed string must be a `Generics` token stream");
-        let where_clause = self.where_clause.as_ref().map(|clause| {
-            parse_str(clause).expect("the parsed string must be a `WhereClause` token stream")
-        });
-        generics.where_clause = where_clause;
-        generics
-    }
-}
-
-impl UniqueEq for GenericsItem {
-    fn eq(&self, other: &Self) -> bool {
-        self.ident == other.ident
-    }
-}
-
-impl TryFrom<Item> for GenericsItem {
-    type Error = Error;
-
-    fn try_from(item: Item) -> Result<Self> {
-        let (ident, generics) = match item {
-            Item::Enum(item_enum) => (item_enum.ident, item_enum.generics),
-            Item::Struct(item_struct) => (item_struct.ident, item_struct.generics),
-            _ => return Err(Error::new(item.span(), "expected `struct` or `enum`")),
-        };
-        let ident = ident.to_string();
-        let where_clause = generics
-            .where_clause
-            .as_ref()
-            .map(|clause| clause.to_token_stream().to_string());
-        let generics = generics.to_token_stream().to_string();
-        Ok(GenericsItem {
-            ident,
-            generics,
-            where_clause,
-        })
-    }
-}
-
-pub(crate) fn register_generics(item: Item, custom_id: Option<Ident>) -> Result<TokenStream> {
-    let mut generics: GenericsItem = item.clone().try_into()?;
+pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result<TokenStream> {
+    let mut generics: GenericsItem = item.try_into()?;
     if let Some(id) = custom_id {
         generics.ident = id.to_string();
     }
@@ -68,7 +27,7 @@ pub(crate) fn register_generics(item: Item, custom_id: Option<Ident>) -> Result<
     })?;
     match generics_vec.push(generics) {
         Some(gen) => Err(Error::new(
-            item.span(),
+            get_ident(item)?.span(),
             format!(
                 "{} is already registered; use a different identifier",
                 gen.ident
@@ -89,5 +48,58 @@ pub(crate) fn find_generics(ident: &Ident) -> Result<Option<Generics>> {
     Ok(generics_vec
         .iter()
         .find(|gen| gen.ident == name)
-        .map(|gen| gen.as_generics()))
+        .map(|gen| gen.into()))
+}
+
+fn get_ident(item: &Item) -> Result<&Ident> {
+    match item {
+        Item::Enum(item_enum) => Ok(&item_enum.ident),
+        Item::Struct(item_struct) => Ok(&item_struct.ident),
+        _ => Err(Error::new(item.span(), "expected `struct` or `enum`")),
+    }
+}
+
+fn get_generics(item: &Item) -> Result<&Generics> {
+    match item {
+        Item::Enum(item_enum) => Ok(&item_enum.generics),
+        Item::Struct(item_struct) => Ok(&item_struct.generics),
+        _ => Err(Error::new(item.span(), "expected `struct` or `enum`")),
+    }
+}
+
+impl UniqueEq for GenericsItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.ident == other.ident
+    }
+}
+
+impl TryFrom<&Item> for GenericsItem {
+    type Error = Error;
+
+    fn try_from(item: &Item) -> Result<Self> {
+        let ident = get_ident(item)?.to_string();
+        let generics = get_generics(item)?;
+        let where_clause = generics
+            .where_clause
+            .as_ref()
+            .map(|clause| clause.to_token_stream().to_string());
+        let generics = generics.to_token_stream().to_string();
+        Ok(GenericsItem {
+            ident,
+            generics,
+            where_clause,
+        })
+    }
+}
+
+impl From<&GenericsItem> for Generics {
+    fn from(item: &GenericsItem) -> Self {
+        let mut generics: Generics =
+            parse_str(&item.generics).expect("the parsed string must be a `Generics` token stream");
+        let where_clause = item.where_clause.as_ref().map(|clause| {
+            parse_str(clause).expect("the parsed string must be a `WhereClause` token stream")
+        });
+        generics.where_clause = where_clause;
+        generics
+    }
 }
