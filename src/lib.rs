@@ -3,9 +3,9 @@
 //! Tired of repeating all the generics in every `impl` block?
 //!
 //! Autogen is a set of macros that allows you to automatically apply generics to `impl` blocks.
-//! - the [register](register) macro registers the generics of a `struct` or `enum`,
+//! - the [register](macro@register) macro registers the generics of a `struct` or `enum`,
 //! including lifetimes and the where clause.
-//! - the [apply](apply) macro applies the generics to an `impl` block.
+//! - the [apply](macro@apply) macro applies the generics to an `impl` block.
 //! ```
 //! #[autogen::register]
 //! struct Struct<'a, T, R: ?Sized>
@@ -31,7 +31,8 @@
 //! # }
 //! impl<'a, T, R: ?Sized> Struct<'a, T, R> where T: PartialEq {}
 //! ```
-//! For more examples see the [register](register) and [apply](apply) docs.
+//! For more examples see the [register](macro@register) and [apply](macro@apply) docs.
+
 mod generics;
 mod unique_vec;
 
@@ -48,7 +49,7 @@ use crate::{
 };
 
 /// This macro is used to register the generics of a `struct` or `enum` that can later be applied to
-/// an `impl` block with the [apply](apply) macro.
+/// an `impl` block with the [apply](macro@apply) macro.
 ///
 /// # Examples
 ///
@@ -174,7 +175,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 }
 
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
-/// the [register](register) macro to an `impl` block.
+/// the [register](macro@register) macro to an `impl` block.
 ///
 /// # Examples
 ///
@@ -307,7 +308,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// impl Trait for (Struct1, Struct2) {}
 /// ```
 /// To learn how to apply generics with a custom identifier, see the
-/// [register](register#using-a-custom-identifier) macro docs.
+/// [register](macro@register#using-a-custom-identifier) macro docs.
 #[proc_macro_attribute]
 pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     let custom_id = if args.is_empty() {
