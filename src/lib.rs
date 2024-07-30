@@ -420,3 +420,6 @@ fn expand_tuple(ty: &mut TypeTuple, custom_id: Option<&Ident>) -> Vec<Result<Gen
         .flat_map(|elem| expand_all_types(elem, custom_id))
         .collect()
 }
+
+#[cfg(doc)]
+mod readme_tests;

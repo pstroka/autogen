@@ -25,7 +25,7 @@ where
 impl Struct {}
 ```
 This will expand to:
-```rust
+```rust ignore
 impl<'a, T, R: ?Sized> Struct<'a, T, R> where T: PartialEq {}
 ```
 Apart from the type itself, the generics can also be applied to:
@@ -154,7 +154,7 @@ custom identifier. This can be useful if a type with the same name is already re
 another module.
 
 This will not compile because `Name` is already registered.
-```rust
+```rust compile_fail
 #[autogen::register]
 struct Name<T: PartialEq> {
     t: T,
