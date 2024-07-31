@@ -9,6 +9,7 @@ use crate::unique_vec::{UniqueEq, UniqueVec};
 static GENERICS: Mutex<UniqueVec<GenericsItem>> = Mutex::new(UniqueVec::new());
 
 struct GenericsItem {
+    id: String,
     ident: String,
     generics: String,
     where_clause: Option<String>,
@@ -17,7 +18,7 @@ struct GenericsItem {
 pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result<TokenStream> {
     let mut generics: GenericsItem = item.try_into()?;
     if let Some(id) = custom_id {
-        generics.ident = id.to_string();
+        generics.id = id.to_string();
     }
     let mut generics_vec = GENERICS.lock().map_err(|_| {
         Error::new(
@@ -30,24 +31,25 @@ pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result
             get_ident(item)?.span(),
             format!(
                 "{} is already registered; use a different identifier",
-                gen.ident
+                gen.id
             ),
         )),
         None => Ok(item.to_token_stream().into()),
     }
 }
 
-pub(crate) fn find_generics(ident: &Ident) -> Result<Option<Generics>> {
+pub(crate) fn find_generics(ident: &Ident, id: &Ident) -> Result<Option<Generics>> {
     let generics_vec = GENERICS.lock().map_err(|_| {
         Error::new(
             ident.span(),
             "could not apply generics because of previous errors",
         )
     })?;
-    let name = ident.to_string();
+    let id = id.to_string();
+    let ident = ident.to_string();
     Ok(generics_vec
         .iter()
-        .find(|gen| gen.ident == name)
+        .find(|gen| gen.id == id && gen.ident == ident)
         .map(|gen| gen.into()))
 }
 
@@ -69,7 +71,7 @@ fn get_generics(item: &Item) -> Result<&Generics> {
 
 impl UniqueEq for GenericsItem {
     fn eq(&self, other: &Self) -> bool {
-        self.ident == other.ident
+        self.id == other.id && self.ident == other.ident
     }
 }
 
@@ -78,6 +80,7 @@ impl TryFrom<&Item> for GenericsItem {
 
     fn try_from(item: &Item) -> Result<Self> {
         let ident = get_ident(item)?.to_string();
+        let id = ident.clone();
         let generics = get_generics(item)?;
         let where_clause = generics
             .where_clause
@@ -85,6 +88,7 @@ impl TryFrom<&Item> for GenericsItem {
             .map(|clause| clause.to_token_stream().to_string());
         let generics = generics.to_token_stream().to_string();
         Ok(GenericsItem {
+            id,
             ident,
             generics,
             where_clause,

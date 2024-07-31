@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[autogen::register]
 struct Struct<X: Debug, Y: Debug> {
@@ -135,4 +135,39 @@ fn combo() {
     let s2 = Struct { x: 4, y: 7.6 };
     let crazy = [([Some(&s1)], s2, "****".to_string())];
     assert_eq!(crazy[..].type_of(), "crazy 3, 5.2, 4, 7.6 ****");
+}
+
+#[test]
+fn custom_id() {
+    #[autogen::register(StructX)]
+    struct Struct<X: Display> {
+        x: X,
+    }
+
+    #[autogen::apply(StructX)]
+    impl Trait for Struct {
+        fn type_of(&self) -> String {
+            format!("custom {}", self.x)
+        }
+    }
+    let s = Struct { x: "x" };
+    assert_eq!(s.type_of(), "custom x".to_string());
+}
+
+#[test]
+fn custom_with_multiple_types() {
+    #[autogen::register(StructY)]
+    struct Struct<Y: Display> {
+        y: Y,
+    }
+
+    #[autogen::apply(StructY)]
+    impl Trait for (Struct, String) {
+        fn type_of(&self) -> String {
+            format!("custom {} {}", self.0.y, self.1)
+        }
+    }
+    let s = Struct { y: "y" };
+    let tuple = (s, "z".to_string());
+    assert_eq!(tuple.type_of(), "custom y z".to_string());
 }

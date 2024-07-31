@@ -379,15 +379,15 @@ fn expand_all_types(ty: &mut Type, custom_id: Option<&Ident>) -> Vec<Result<Gene
 
 fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
     let mut vec = expand_generic_args(ty, custom_id);
-    let ident = custom_id.unwrap_or_else(|| {
-        // don't use `get_ident()` to be able to expand types from a different module
-        &ty.path
-            .segments
-            .last()
-            .expect("a path has to have at least one segment")
-            .ident
-    });
-    if let Some(result) = find_generics(ident).transpose() {
+    // don't use `get_ident()` to be able to expand types from a different module
+    let ident = &ty
+        .path
+        .segments
+        .last()
+        .expect("a path has to have at least one segment")
+        .ident;
+    let id = custom_id.unwrap_or(ident);
+    if let Some(result) = find_generics(ident, id).transpose() {
         if let Ok(generics) = result {
             let ty_generics = generics.split_for_impl().1;
             let mut path = ty.path.to_token_stream();
