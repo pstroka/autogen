@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::ToTokens;
 use syn::{parse_str, spanned::Spanned, Error, Generics, Ident, Item, Result};
 
@@ -27,13 +28,14 @@ pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result
         )
     })?;
     match generics_vec.push(generics) {
-        Some(gen) => Err(Error::new(
-            get_ident(item)?.span(),
-            format!(
-                "{} is already registered; use a different identifier",
-                gen.id
-            ),
-        )),
+        Some(gen) => {
+            let mut error = Error::new(
+                get_ident(item)?.span(),
+                format!("{} is already registered", gen.id),
+            );
+            error.combine(Error::new(Span::call_site(), "use a different identifier"));
+            Err(error)
+        }
         None => Ok(item.to_token_stream().into()),
     }
 }
@@ -41,7 +43,7 @@ pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result
 pub(crate) fn find_generics(ident: &Ident, id: &Ident) -> Result<Option<Generics>> {
     let generics_vec = GENERICS.lock().map_err(|_| {
         Error::new(
-            ident.span(),
+            Span::call_site(),
             "could not apply generics because of previous errors",
         )
     })?;
@@ -51,6 +53,15 @@ pub(crate) fn find_generics(ident: &Ident, id: &Ident) -> Result<Option<Generics
         .iter()
         .find(|gen| gen.id == id && gen.ident == ident)
         .map(|gen| gen.into()))
+}
+
+pub(crate) fn find_ident_by_id(id: &Ident) -> Option<String> {
+    let generics_vec = GENERICS.lock().ok()?;
+    let id = id.to_string();
+    generics_vec
+        .iter()
+        .find(|gen| gen.id == id)
+        .map(|gen| gen.ident.clone())
 }
 
 fn get_ident(item: &Item) -> Result<&Ident> {

@@ -42,17 +42,15 @@
 mod generics;
 mod unique_vec;
 
+use generics::{find_generics, find_ident_by_id, register_generics};
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
 use syn::{
     parse2, parse_macro_input, spanned::Spanned, Error, GenericArgument, Generics, Ident, Item,
     ItemImpl, PathArguments, Result, Type, TypePath, TypeTuple,
 };
-
-use crate::{
-    generics::{find_generics, register_generics},
-    unique_vec::UniqueVec,
-};
+use unique_vec::UniqueVec;
 
 /// This macro is used to register the generics of a `struct` or `enum` that can later be applied to
 /// an `impl` block with the [apply](macro@apply) macro.
@@ -351,13 +349,18 @@ fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
         ok.into_iter().filter_map(|result| result.ok()).collect();
 
     if unique_results.len() > 1 {
-        Err(Error::new(
+        let mut error = Error::new(
             ty.span(),
             "applying generics to different registered types is not supported",
-        ))
+        );
+        error.combine(Error::new(Span::call_site(), "specify which type to use"));
+        Err(error)
     } else {
         unique_results.pop().ok_or_else(|| match custom_id {
-            Some(id) => Error::new(ty.span(), format!("{id} is not registered")),
+            Some(id) => match find_ident_by_id(id) {
+                Some(ident) => Error::new(ty.span(), format!("{ident} not found")),
+                None => Error::new(Span::call_site(), format!("{id} is not registered")),
+            },
             None => Error::new(ty.span(), "no registered type found"),
         })
     }

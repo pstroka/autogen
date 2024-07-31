@@ -23,7 +23,7 @@ fn regular() {
     }
 
     let s = Struct { x: 3, y: 5.2 };
-    assert_eq!(s.type_of(), "regular 3, 5.2".to_string());
+    assert_eq!(s.type_of(), "regular 3, 5.2");
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn reference() {
     }
 
     let s = Struct { x: 3, y: 5.2 };
-    assert_eq!((&&s).type_of(), "reference 3, 5.2".to_string());
+    assert_eq!((&&s).type_of(), "reference 3, 5.2");
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn array() {
     }
 
     let array = [Struct { x: 3, y: 5.2 }];
-    assert_eq!(array.type_of(), "array 3, 5.2".to_string());
+    assert_eq!(array.type_of(), "array 3, 5.2");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn slice() {
     }
 
     let array = [Struct { x: 3, y: 5.2 }];
-    assert_eq!(array[..].type_of(), "slice 3, 5.2".to_string());
+    assert_eq!(array[..].type_of(), "slice 3, 5.2");
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn pointer() {
 
     let s = Struct { x: 3, y: 5.2 };
     let pointer = &s as *const Struct<_, _>;
-    assert_eq!(pointer.type_of(), "pointer".to_string());
+    assert_eq!(pointer.type_of(), "pointer");
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn tuple() {
     let s1 = Struct { x: 3, y: 5.2 };
     let s2 = Struct { x: 4, y: 7.6 };
     let tuple = ("a", s1, s2);
-    assert_eq!(tuple.type_of(), "tuple a, 3, 5.2, 4, 7.6".to_string());
+    assert_eq!(tuple.type_of(), "tuple a, 3, 5.2, 4, 7.6");
 }
 
 #[test]
@@ -112,8 +112,8 @@ fn generic_arg() {
     let s = Struct { x: 3, y: 5.2 };
     let ok: Result<_, String> = Ok(s);
     let err: Result<Struct<i32, f64>, String> = Err("oops".to_string());
-    assert_eq!(ok.type_of(), "ok 3, 5.2".to_string());
-    assert_eq!(err.type_of(), "error oops".to_string());
+    assert_eq!(ok.type_of(), "ok 3, 5.2");
+    assert_eq!(err.type_of(), "error oops");
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn custom_id() {
         }
     }
     let s = Struct { x: "x" };
-    assert_eq!(s.type_of(), "custom x".to_string());
+    assert_eq!(s.type_of(), "custom x");
 }
 
 #[test]
@@ -169,5 +169,24 @@ fn custom_with_multiple_types() {
     }
     let s = Struct { y: "y" };
     let tuple = (s, "z".to_string());
-    assert_eq!(tuple.type_of(), "custom y z".to_string());
+    assert_eq!(tuple.type_of(), "custom y z");
+}
+
+#[test]
+fn custom_with_multiple_registered_types() {
+    #[autogen::register]
+    struct Struct2<Z: Display> {
+        z: Z,
+    }
+
+    #[autogen::apply(Struct)]
+    impl Trait for (Struct, Struct2<String>) {
+        fn type_of(&self) -> String {
+            format!("custom {:?} {:?} {}", self.0.x, self.0.y, self.1.z)
+        }
+    }
+    let s1 = Struct { x: 1, y: 2};
+    let s2 = Struct2 { z: "z".to_string() };
+    let tuple = (s1, s2);
+    assert_eq!(tuple.type_of(), "custom 1 2 z");
 }

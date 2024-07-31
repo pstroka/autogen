@@ -13,3 +13,4 @@ keywords = ["generics", "types", "impl", "traits", "autogen"]
 [dependencies]
 quote = "1.0.36"
 syn = { version = "2.0.72", features = ["full"] }
+proc-macro2 = "1.0.86"
