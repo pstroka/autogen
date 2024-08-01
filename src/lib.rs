@@ -46,9 +46,10 @@ use generics::{find_generics, find_ident_by_id, register_generics};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
+use std::borrow::BorrowMut;
 use syn::{
     parse2, parse_macro_input, spanned::Spanned, Error, GenericArgument, Generics, Ident, Item,
-    ItemImpl, PathArguments, Result, Type, TypePath, TypeTuple,
+    ItemImpl, Path, PathArguments, Result, Type, TypePath, TypeTuple,
 };
 use unique_vec::UniqueVec;
 
@@ -314,6 +315,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// To learn how to apply generics with a custom identifier, see the
 /// [register](macro@register#using-a-custom-identifier) macro docs.
 #[proc_macro_attribute]
+// TODO: replace generics e.g. T0 = Self, T0 = T1, X = Y, D = String
 pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     let custom_id = if args.is_empty() {
         None
@@ -322,7 +324,7 @@ pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     };
 
     let mut item = parse_macro_input!(original as ItemImpl);
-    match expand_types(item.self_ty.as_mut(), custom_id.as_ref()) {
+    match expand_types(item.borrow_mut(), custom_id.as_ref()) {
         Ok(generics) => {
             item.generics = generics;
             item.to_token_stream().into()
@@ -331,8 +333,13 @@ pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
-    let results = expand_all_types(ty, custom_id);
+fn expand_types(item: &mut ItemImpl, custom_id: Option<&Ident>) -> Result<Generics> {
+    let mut results = expand_all_types(item.self_ty.as_mut(), custom_id);
+    if let Some((_, path, _)) = item.trait_.borrow_mut() {
+        // TODO: expand on every occurrence in every impl item
+        let mut trait_args = expand_generic_args(path, custom_id);
+        results.append(trait_args.borrow_mut());
+    }
     let (ok, err): (Vec<_>, Vec<_>) = results.into_iter().partition(|result| result.is_ok());
     let error = err
         .into_iter()
@@ -350,7 +357,7 @@ fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
 
     if unique_results.len() > 1 {
         let mut error = Error::new(
-            ty.span(),
+            item.span(),
             "applying generics to different registered types is not supported",
         );
         error.combine(Error::new(Span::call_site(), "specify which type to use"));
@@ -358,10 +365,10 @@ fn expand_types(ty: &mut Type, custom_id: Option<&Ident>) -> Result<Generics> {
     } else {
         unique_results.pop().ok_or_else(|| match custom_id {
             Some(id) => match find_ident_by_id(id) {
-                Some(ident) => Error::new(ty.span(), format!("{ident} not found")),
+                Some(ident) => Error::new(item.span(), format!("{ident} not found")),
                 None => Error::new(Span::call_site(), format!("{id} is not registered")),
             },
-            None => Error::new(ty.span(), "no registered type found"),
+            None => Error::new(item.span(), "no registered type found"),
         })
     }
 }
@@ -381,7 +388,7 @@ fn expand_all_types(ty: &mut Type, custom_id: Option<&Ident>) -> Vec<Result<Gene
 }
 
 fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
-    let mut vec = expand_generic_args(ty, custom_id);
+    let mut vec = expand_generic_args(ty.path.borrow_mut(), custom_id);
     // don't use `get_ident()` to be able to expand types from a different module
     let ident = &ty
         .path
@@ -407,9 +414,8 @@ fn expand_path(ty: &mut TypePath, custom_id: Option<&Ident>) -> Vec<Result<Gener
     vec
 }
 
-fn expand_generic_args(ty: &mut TypePath, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
-    ty.path
-        .segments
+fn expand_generic_args(path: &mut Path, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
+    path.segments
         .iter_mut()
         .filter_map(|segment| match &mut segment.arguments {
             PathArguments::AngleBracketed(args) => Some(args),
