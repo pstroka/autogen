@@ -190,3 +190,17 @@ fn custom_with_multiple_registered_types() {
     let tuple = (s1, s2);
     assert_eq!(tuple.type_of(), "custom 1 2 z");
 }
+
+#[test]
+fn fn_arg() {
+    #[autogen::apply]
+    impl Struct {
+        fn combine(&self, other: &Struct) -> String {
+            format!("{:?} {:?} - {:?} {:?}", self.x, self.y, other.x, other.y)
+        }
+    }
+
+    let a = Struct { x: 1, y: 2 };
+    let b = Struct { x: 3, y: 4 };
+    assert_eq!(a.combine(&b), "1 2 - 3 4");
+}
