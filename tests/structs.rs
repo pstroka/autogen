@@ -82,19 +82,23 @@ fn pointer() {
 #[test]
 fn tuple() {
     #[autogen::apply]
-    impl Trait for (&'static str, Struct, Struct) {
+    impl Trait for (&'static str, Struct, Struct, Struct<f64, String>) {
         fn type_of(&self) -> String {
             format!(
-                "tuple {}, {:?}, {:?}, {:?}, {:?}",
-                self.0, self.1.x, self.1.y, self.2.x, self.2.y
+                "tuple {}, {:?}, {:?}, {:?}, {:?}, {}, {}",
+                self.0, self.1.x, self.1.y, self.2.x, self.2.y, self.3.x, self.3.y
             )
         }
     }
 
     let s1 = Struct { x: 3, y: 5.2 };
     let s2 = Struct { x: 4, y: 7.6 };
-    let tuple = ("a", s1, s2);
-    assert_eq!(tuple.type_of(), "tuple a, 3, 5.2, 4, 7.6");
+    let s3 = Struct {
+        x: 4.2,
+        y: "b".to_string(),
+    };
+    let tuple = ("a", s1, s2, s3);
+    assert_eq!(tuple.type_of(), "tuple a, 3, 5.2, 4, 7.6, 4.2, b");
 }
 
 #[test]
@@ -185,7 +189,7 @@ fn custom_with_multiple_registered_types() {
             format!("custom {:?} {:?} {}", self.0.x, self.0.y, self.1.z)
         }
     }
-    let s1 = Struct { x: 1, y: 2};
+    let s1 = Struct { x: 1, y: 2 };
     let s2 = Struct2 { z: "z".to_string() };
     let tuple = (s1, s2);
     assert_eq!(tuple.type_of(), "custom 1 2 z");

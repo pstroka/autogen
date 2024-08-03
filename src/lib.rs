@@ -48,8 +48,9 @@ use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
 use std::borrow::BorrowMut;
 use syn::{
-    parse2, parse_macro_input, spanned::Spanned, Error, GenericArgument, Generics, Ident, ImplItem,
-    ImplItemFn, Item, ItemImpl, Path, PathArguments, Result, ReturnType, Type, TypeTuple,
+    parse2, parse_macro_input, spanned::Spanned, Error, FnArg, GenericArgument, Generics, Ident,
+    ImplItem, ImplItemFn, Item, ItemImpl, Pat, Path, PathArguments, Result, ReturnType, Stmt, Type,
+    TypeTuple,
 };
 use unique_vec::UniqueVec;
 
@@ -179,6 +180,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
     register_generics(&item, custom_id).unwrap_or_else(|err| err.to_compile_error().into())
 }
 
+/// TODO: add new examples
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
 /// the [register](macro@register) macro to an `impl` block.
 ///
@@ -381,10 +383,8 @@ fn expand_impl_items(item: &mut ItemImpl, custom_id: Option<&Ident>) -> Vec<Resu
 
 fn expand_impl_item(impl_item: &mut ImplItem, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
     match impl_item {
-        // TODO: test
         ImplItem::Const(const_item) => expand_all_types(const_item.ty.borrow_mut(), custom_id),
         ImplItem::Fn(fn_item) => expand_fn_item(fn_item, custom_id),
-        // TODO: test
         ImplItem::Type(type_item) => expand_all_types(type_item.ty.borrow_mut(), custom_id),
         _ => vec![],
     }
@@ -396,7 +396,7 @@ fn expand_fn_item(fn_item: &mut ImplItemFn, custom_id: Option<&Ident>) -> Vec<Re
         .inputs
         .iter_mut()
         .filter_map(|input| match input {
-            syn::FnArg::Typed(typed) => Some(typed.ty.borrow_mut()),
+            FnArg::Typed(typed) => Some(typed.ty.borrow_mut()),
             _ => None,
         })
         .flat_map(|ty| expand_all_types(ty, custom_id))
@@ -411,11 +411,11 @@ fn expand_fn_item(fn_item: &mut ImplItemFn, custom_id: Option<&Ident>) -> Vec<Re
         .stmts
         .iter_mut()
         .filter_map(|s| match s {
-            syn::Stmt::Local(loc) => Some(loc.pat.borrow_mut()),
+            Stmt::Local(loc) => Some(loc.pat.borrow_mut()),
             _ => None,
         })
         .filter_map(|pat| match pat {
-            syn::Pat::Type(ty) => Some(ty.ty.borrow_mut()),
+            Pat::Type(ty) => Some(ty.ty.borrow_mut()),
             _ => None,
         })
         .flat_map(|ty| expand_all_types(ty, custom_id))
@@ -434,16 +434,12 @@ fn expand_all_types(ty: &mut Type, custom_id: Option<&Ident>) -> Vec<Result<Gene
         Type::Reference(ty) => expand_all_types(ty.elem.as_mut(), custom_id),
         Type::Slice(ty) => expand_all_types(ty.elem.as_mut(), custom_id),
         Type::Tuple(ty) => expand_tuple(ty, custom_id),
-        other => vec![Err(Error::new(
-            other.span(),
-            format!("cannot apply generics to {}", other.to_token_stream()),
-        ))],
+        _ => vec![],
     }
 }
 
 fn expand_path(path: &mut Path, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
     let mut vec = expand_generic_args(path.borrow_mut(), custom_id);
-    // don't use `get_ident()` to be able to expand types from a different module
     let segment = path
         .segments
         .last_mut()

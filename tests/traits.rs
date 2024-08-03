@@ -5,6 +5,14 @@ struct Struct<T: Display> {
     t: T,
 }
 
+trait Def<T> {
+    const DEF: Option<T>;
+
+    fn get_def(&self) -> Option<T> {
+        Self::DEF
+    }
+}
+
 #[test]
 fn trait_generic_arg_as_input() {
     #[autogen::apply]
@@ -32,4 +40,27 @@ fn trait_generic_arg_as_output() {
     let string: String = "abc".to_string();
     let s: Struct<_> = string.into();
     assert_eq!(s.t, "abc");
+}
+
+#[test]
+fn associated_type() {
+    #[autogen::apply]
+    impl Iterator for Struct {
+        type Item = Struct;
+
+        fn next(&mut self) -> Option<Struct> {
+            None
+        }
+    }
+}
+
+#[test]
+fn associated_const() {
+    #[autogen::apply]
+    impl Def<Struct> for Struct {
+        const DEF: Option<Struct> = None;
+    }
+
+    let s = Struct { t: "t" };
+    assert!(s.get_def().is_none());
 }
