@@ -199,12 +199,21 @@ fn custom_with_multiple_registered_types() {
 fn fn_arg() {
     #[autogen::apply]
     impl Struct {
-        fn combine(&self, other: &Struct) -> String {
+        fn combine_as_string(&self, other: &Struct) -> String {
             format!("{:?} {:?} - {:?} {:?}", self.x, self.y, other.x, other.y)
+        }
+        fn combine<'a>(&'a self, other: &'a Struct) -> Vec<&'a Struct> {
+            let v: Vec<&'a Struct> = [self, other].into_iter().collect();
+            v
         }
     }
 
     let a = Struct { x: 1, y: 2 };
     let b = Struct { x: 3, y: 4 };
-    assert_eq!(a.combine(&b), "1 2 - 3 4");
+    let c = a.combine(&b);
+    assert_eq!(a.combine_as_string(&b), "1 2 - 3 4");
+    assert_eq!(c[0].x, a.x);
+    assert_eq!(c[0].y, a.y);
+    assert_eq!(c[1].x, b.x);
+    assert_eq!(c[1].y, b.y);
 }

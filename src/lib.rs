@@ -52,6 +52,7 @@ use syn::{
     ImplItem, ImplItemFn, Item, ItemImpl, Pat, Path, PathArguments, Result, ReturnType, Stmt, Type,
     TypeTuple,
 };
+use try_match::match_ok;
 use unique_vec::UniqueVec;
 
 /// This macro is used to register the generics of a `struct` or `enum` that can later be applied to
@@ -395,10 +396,7 @@ fn expand_fn_item(fn_item: &mut ImplItemFn, custom_id: Option<&Ident>) -> Vec<Re
         .sig
         .inputs
         .iter_mut()
-        .filter_map(|input| match input {
-            FnArg::Typed(typed) => Some(typed.ty.borrow_mut()),
-            _ => None,
-        })
+        .filter_map(|input| match_ok!(input, FnArg::Typed(typed) => typed.ty.borrow_mut()))
         .flat_map(|ty| expand_all_types(ty, custom_id))
         .collect();
 
@@ -410,14 +408,8 @@ fn expand_fn_item(fn_item: &mut ImplItemFn, custom_id: Option<&Ident>) -> Vec<Re
         .block
         .stmts
         .iter_mut()
-        .filter_map(|s| match s {
-            Stmt::Local(loc) => Some(loc.pat.borrow_mut()),
-            _ => None,
-        })
-        .filter_map(|pat| match pat {
-            Pat::Type(ty) => Some(ty.ty.borrow_mut()),
-            _ => None,
-        })
+        .filter_map(|s| match_ok!(s, Stmt::Local(loc) => loc.pat.borrow_mut()))
+        .filter_map(|pat| match_ok!(pat, Pat::Type(ty) => ty.ty.borrow_mut()))
         .flat_map(|ty| expand_all_types(ty, custom_id))
         .collect();
 
@@ -465,15 +457,9 @@ fn expand_path(path: &mut Path, custom_id: Option<&Ident>) -> Vec<Result<Generic
 fn expand_generic_args(path: &mut Path, custom_id: Option<&Ident>) -> Vec<Result<Generics>> {
     path.segments
         .iter_mut()
-        .filter_map(|segment| match &mut segment.arguments {
-            PathArguments::AngleBracketed(args) => Some(args),
-            _ => None,
-        })
+        .filter_map(|seg| match_ok!(&mut seg.arguments, PathArguments::AngleBracketed(args)))
         .flat_map(|args| &mut args.args)
-        .filter_map(|arg| match arg {
-            GenericArgument::Type(ty) => Some(ty),
-            _ => None,
-        })
+        .filter_map(|arg| match_ok!(arg, GenericArgument::Type(ty)))
         .flat_map(|ty| expand_all_types(ty, custom_id))
         .collect()
 }

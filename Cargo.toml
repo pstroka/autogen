@@ -14,3 +14,4 @@ keywords = ["generics", "types", "impl", "traits", "autogen"]
 quote = "1.0.36"
 syn = { version = "2.0.72", features = ["full"] }
 proc-macro2 = "1.0.86"
+try_match = "0.4.2"
