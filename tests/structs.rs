@@ -161,19 +161,19 @@ fn custom_id() {
 #[test]
 fn custom_with_multiple_types() {
     #[autogen::register(StructY)]
-    struct Struct<Y: Display> {
+    struct Struct<Y: Debug> {
         y: Y,
     }
 
-    #[autogen::apply(StructY)]
+    #[autogen::apply(id = StructY)]
     impl Trait for (Struct, String) {
         fn type_of(&self) -> String {
-            format!("custom {} {}", self.0.y, self.1)
+            format!("custom {:?} {}", self.0.y, self.1)
         }
     }
-    let s = Struct { y: "y" };
-    let tuple = (s, "z".to_string());
-    assert_eq!(tuple.type_of(), "custom y z");
+    let s = Struct { y: 0 };
+    let tuple = (s, "y".to_string());
+    assert_eq!(tuple.type_of(), "custom 0 y");
 }
 
 #[test]

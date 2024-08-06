@@ -39,18 +39,20 @@
 //! ```
 //! For more examples see the [register](macro@register) and [apply](macro@apply) docs.
 
+mod args;
 mod generics;
 mod unique_vec;
 
+use args::Args;
 use generics::{find_generics, find_ident_by_id, register_generics};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
 use std::borrow::BorrowMut;
 use syn::{
-    parse2, parse_macro_input, spanned::Spanned, Error, FnArg, GenericArgument, Generics, Ident,
-    ImplItem, ImplItemFn, Item, ItemImpl, Pat, Path, PathArguments, Result, ReturnType, Stmt, Type,
-    TypeTuple,
+    parse2, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error,
+    FnArg, GenericArgument, Generics, Ident, ImplItem, ImplItemFn, Item, ItemImpl, Meta, Pat, Path,
+    PathArguments, Result, ReturnType, Stmt, Type, TypeTuple,
 };
 use try_match::match_ok;
 use unique_vec::UniqueVec;
@@ -320,14 +322,14 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 // TODO: replace generics e.g. T0 = Self, T0 = T1, X = Y, D = String
 pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
-    let custom_id = if args.is_empty() {
-        None
-    } else {
-        Some(parse_macro_input!(args as Ident))
+    let args = parse_macro_input!(args with Punctuated::<Meta, Comma>::parse_terminated);
+    let args: Args = match args.try_into() {
+        Ok(args) => args,
+        Err(err) => return err.to_compile_error().into(),
     };
 
     let mut item = parse_macro_input!(original as ItemImpl);
-    match expand_types(item.borrow_mut(), custom_id.as_ref()) {
+    match expand_types(item.borrow_mut(), args.custom_id.as_ref()) {
         Ok(generics) => {
             item.generics = generics;
             item.to_token_stream().into()

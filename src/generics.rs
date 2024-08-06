@@ -23,7 +23,7 @@ pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result
     }
     let mut generics_vec = GENERICS.lock().map_err(|_| {
         Error::new(
-            item.span(),
+            Span::call_site(),
             "could not register generics because of previous errors",
         )
     })?;

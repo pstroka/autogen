@@ -1,5 +1,5 @@
 use quote::ToTokens;
-use syn::Generics;
+use syn::{Generics, Ident};
 
 pub(crate) struct UniqueVec<T: UniqueEq>(Vec<T>);
 
@@ -54,5 +54,17 @@ pub(crate) trait UniqueEq<Rhs: ?Sized = Self> {
 impl UniqueEq for Generics {
     fn eq(&self, other: &Self) -> bool {
         self.to_token_stream().to_string() == other.to_token_stream().to_string()
+    }
+}
+
+impl UniqueEq for Ident {
+    fn eq(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+impl UniqueEq for (Ident, Ident) {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
