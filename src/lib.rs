@@ -50,9 +50,10 @@ use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
 use std::borrow::BorrowMut;
 use syn::{
-    parse2, parse_macro_input, punctuated::Punctuated, token::Comma, Error, FnArg, GenericArgument,
-    Generics, Ident, ImplItem, ImplItemFn, Item, ItemImpl, Meta, Pat, Path, PathArguments, Result,
-    ReturnType, Stmt, Type, TypeTuple,
+    parse2, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Block,
+    Error, Expr, FnArg, GenericArgument, Generics, Ident, ImplItem, ImplItemFn, Item, ItemFn,
+    ItemImpl, Local, Meta, Pat, Path, PathArguments, Result, ReturnType, Signature, Stmt, Type,
+    TypeTuple,
 };
 use try_match::match_ok;
 use unique_vec::UniqueVec;
@@ -328,8 +329,41 @@ pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    let mut item = parse_macro_input!(original as ItemImpl);
-    match expand_types(item.borrow_mut(), &args) {
+    let mut item = parse_macro_input!(original as Item);
+    expand_item(item.borrow_mut(), &args)
+}
+
+type Results = Vec<Result<Generics>>;
+
+fn expand_item(item: &mut Item, args: &Args) -> TokenStream {
+    match item {
+        Item::Fn(fn_item) => expand_fn(fn_item, args),
+        Item::Impl(impl_item) => expand_impl(impl_item, args),
+        _ => Error::new(item.span(), "expected `impl` or `fn`")
+            .to_compile_error()
+            .into(),
+    }
+}
+
+fn expand_fn(item: &mut ItemFn, args: &Args) -> TokenStream {
+    let mut results = expand_fn_signature(item.sig.borrow_mut(), args);
+    results.append(&mut expand_block(item.block.borrow_mut(), args));
+    match combine_results(results, item, args) {
+        Ok(generics) => {
+            item.sig.generics = generics;
+            item.to_token_stream().into()
+        }
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn expand_impl(item: &mut ItemImpl, args: &Args) -> TokenStream {
+    let mut results = expand_type(item.self_ty.as_mut(), args);
+    results.append(expand_impl_items(item, args).borrow_mut());
+    if let Some((_, path, _)) = item.trait_.borrow_mut() {
+        results.append(expand_generic_args(path, args).borrow_mut());
+    }
+    match combine_results(results, item, args) {
         Ok(generics) => {
             item.generics = generics;
             item.to_token_stream().into()
@@ -338,12 +372,7 @@ pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_types(item: &mut ItemImpl, args: &Args) -> Result<Generics> {
-    let mut results = expand_all_types(item.self_ty.as_mut(), args);
-    results.append(expand_impl_items(item, args).borrow_mut());
-    if let Some((_, path, _)) = item.trait_.borrow_mut() {
-        results.append(expand_generic_args(path, args).borrow_mut());
-    }
+fn combine_results(results: Results, item: &impl ToTokens, args: &Args) -> Result<Generics> {
     let (ok, err): (Vec<_>, Vec<_>) = results.into_iter().partition(|result| result.is_ok());
     let error = err
         .into_iter()
@@ -369,9 +398,9 @@ fn expand_types(item: &mut ItemImpl, args: &Args) -> Result<Generics> {
     } else {
         unique_results.pop().ok_or_else(|| {
             args.custom_id.as_ref().map_or_else(
-                || Error::new_spanned(&item, "no registered type found"),
+                || Error::new_spanned(item, "no registered type found"),
                 |id| match find_ident_by_id(id) {
-                    Some(ident) => Error::new_spanned(&item, format!("{ident} not found")),
+                    Some(ident) => Error::new_spanned(item, format!("{ident} not found")),
                     None => Error::new(Span::call_site(), format!("{id} is not registered")),
                 },
             )
@@ -379,62 +408,121 @@ fn expand_types(item: &mut ItemImpl, args: &Args) -> Result<Generics> {
     }
 }
 
-fn expand_impl_items(item: &mut ItemImpl, args: &Args) -> Vec<Result<Generics>> {
+fn expand_impl_items(item: &mut ItemImpl, args: &Args) -> Results {
     item.items
         .iter_mut()
         .flat_map(|impl_item| expand_impl_item(impl_item, args))
         .collect()
 }
 
-fn expand_impl_item(impl_item: &mut ImplItem, args: &Args) -> Vec<Result<Generics>> {
+fn expand_impl_item(impl_item: &mut ImplItem, args: &Args) -> Results {
     match impl_item {
-        ImplItem::Const(const_item) => expand_all_types(const_item.ty.borrow_mut(), args),
-        ImplItem::Fn(fn_item) => expand_fn_item(fn_item, args),
-        ImplItem::Type(type_item) => expand_all_types(type_item.ty.borrow_mut(), args),
+        ImplItem::Const(const_item) => expand_type(const_item.ty.borrow_mut(), args),
+        ImplItem::Fn(fn_item) => expand_impl_fn(fn_item, args),
+        ImplItem::Type(type_item) => expand_type(type_item.ty.borrow_mut(), args),
         _ => vec![],
     }
 }
 
-fn expand_fn_item(fn_item: &mut ImplItemFn, args: &Args) -> Vec<Result<Generics>> {
-    let mut results: Vec<_> = fn_item
-        .sig
+fn expand_impl_fn(fn_item: &mut ImplItemFn, args: &Args) -> Results {
+    let mut results: Vec<_> = expand_fn_signature(fn_item.sig.borrow_mut(), args);
+    results.append(&mut expand_block(fn_item.block.borrow_mut(), args));
+    results
+}
+
+fn expand_fn_signature(sig: &mut Signature, args: &Args) -> Results {
+    let mut results: Vec<_> = sig
         .inputs
         .iter_mut()
         .filter_map(|input| match_ok!(input, FnArg::Typed(typed) => typed.ty.borrow_mut()))
-        .flat_map(|ty| expand_all_types(ty, args))
+        .flat_map(|ty| expand_type(ty, args))
         .collect();
 
-    if let ReturnType::Type(_, ty) = fn_item.sig.output.borrow_mut() {
-        results.append(expand_all_types(ty.as_mut(), args).borrow_mut());
+    if let ReturnType::Type(_, ty) = sig.output.borrow_mut() {
+        results.append(expand_type(ty.as_mut(), args).borrow_mut());
     }
-
-    let mut let_results: Vec<_> = fn_item
-        .block
-        .stmts
-        .iter_mut()
-        .filter_map(|s| match_ok!(s, Stmt::Local(loc) => loc.pat.borrow_mut()))
-        .filter_map(|pat| match_ok!(pat, Pat::Type(ty) => ty.ty.borrow_mut()))
-        .flat_map(|ty| expand_all_types(ty, args))
-        .collect();
-
-    results.append(let_results.borrow_mut());
 
     results
 }
 
-fn expand_all_types(ty: &mut Type, args: &Args) -> Vec<Result<Generics>> {
+fn expand_block(block: &mut Block, args: &Args) -> Results {
+    block
+        .stmts
+        .iter_mut()
+        .flat_map(|s| match s {
+            Stmt::Local(loc) => expand_local(loc, args),
+            Stmt::Expr(expr, _) => expand_expr(expr, args),
+            _ => vec![],
+        })
+        .collect()
+}
+
+fn expand_expr(expr: &mut Expr, args: &Args) -> Results {
+    // TODO: check which ones must be implemented
+    match expr {
+        // Expr::Array(_) => todo!(),
+        // Expr::Assign(_) => todo!(),
+        // Expr::Async(_) => todo!(),
+        // Expr::Await(_) => todo!(),
+        // Expr::Binary(_) => todo!(),
+        Expr::Block(block) => expand_block(block.block.borrow_mut(), args),
+        // Expr::Break(_) => todo!(),
+        // Expr::Call(_) => todo!(),
+        // Expr::Cast(_) => todo!(),
+        // Expr::Closure(_) => todo!(),
+        // Expr::Const(_) => todo!(),
+        // Expr::Continue(_) => todo!(),
+        // Expr::Field(_) => todo!(),
+        // Expr::ForLoop(_) => todo!(),
+        // Expr::Group(_) => todo!(),
+        // Expr::If(_) => todo!(),
+        // Expr::Index(_) => todo!(),
+        // Expr::Infer(_) => todo!(),
+        // Expr::Let(_) => todo!(),
+        // Expr::Lit(_) => todo!(),
+        // Expr::Loop(_) => todo!(),
+        // Expr::Macro(_) => todo!(),
+        // Expr::Match(_) => todo!(),
+        // Expr::MethodCall(_) => todo!(),
+        // Expr::Paren(_) => todo!(),
+        // Expr::Path(_) => todo!(),
+        // Expr::Range(_) => todo!(),
+        // Expr::Reference(_) => todo!(),
+        // Expr::Repeat(_) => todo!(),
+        // Expr::Return(_) => todo!(),
+        // Expr::Struct(_) => todo!(),
+        // Expr::Try(_) => todo!(),
+        // Expr::TryBlock(_) => todo!(),
+        // Expr::Tuple(_) => todo!(),
+        // Expr::Unary(_) => todo!(),
+        // Expr::Unsafe(_) => todo!(),
+        // Expr::Verbatim(_) => todo!(),
+        // Expr::While(_) => todo!(),
+        // Expr::Yield(_) => todo!(),
+        _ => vec![],
+    }
+}
+
+fn expand_local(loc: &mut Local, args: &Args) -> Results {
+    match loc.pat.borrow_mut() {
+        Pat::Type(ty) => expand_type(ty.ty.borrow_mut(), args),
+        _ => vec![],
+    }
+}
+
+fn expand_type(ty: &mut Type, args: &Args) -> Results {
     match ty {
-        Type::Array(ty) => expand_all_types(ty.elem.as_mut(), args),
+        Type::Array(ty) => expand_type(ty.elem.as_mut(), args),
         Type::Path(ty) => expand_path(ty.path.borrow_mut(), args),
-        Type::Ptr(ty) => expand_all_types(ty.elem.as_mut(), args),
-        Type::Reference(ty) => expand_all_types(ty.elem.as_mut(), args),
-        Type::Slice(ty) => expand_all_types(ty.elem.as_mut(), args),
+        Type::Ptr(ty) => expand_type(ty.elem.as_mut(), args),
+        Type::Reference(ty) => expand_type(ty.elem.as_mut(), args),
+        Type::Slice(ty) => expand_type(ty.elem.as_mut(), args),
         Type::Tuple(ty) => expand_tuple(ty, args),
         _ => vec![],
     }
 }
 
-fn expand_path(path: &mut Path, args: &Args) -> Vec<Result<Generics>> {
+fn expand_path(path: &mut Path, args: &Args) -> Results {
     let mut vec = expand_generic_args(path.borrow_mut(), args);
     let segment = path
         .segments
@@ -458,20 +546,20 @@ fn expand_path(path: &mut Path, args: &Args) -> Vec<Result<Generics>> {
     vec
 }
 
-fn expand_generic_args(path: &mut Path, args: &Args) -> Vec<Result<Generics>> {
+fn expand_generic_args(path: &mut Path, args: &Args) -> Results {
     path.segments
         .iter_mut()
         .filter_map(|seg| match_ok!(&mut seg.arguments, PathArguments::AngleBracketed(args)))
         .flat_map(|args| &mut args.args)
         .filter_map(|arg| match_ok!(arg, GenericArgument::Type(ty)))
-        .flat_map(|ty| expand_all_types(ty, args))
+        .flat_map(|ty| expand_type(ty, args))
         .collect()
 }
 
-fn expand_tuple(ty: &mut TypeTuple, args: &Args) -> Vec<Result<Generics>> {
+fn expand_tuple(ty: &mut TypeTuple, args: &Args) -> Results {
     ty.elems
         .iter_mut()
-        .flat_map(|elem| expand_all_types(elem, args))
+        .flat_map(|elem| expand_type(elem, args))
         .collect()
 }
 
