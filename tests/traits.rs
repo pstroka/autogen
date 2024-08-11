@@ -32,8 +32,10 @@ fn trait_generic_arg_as_output() {
     #[autogen::apply]
     impl From<T> for Struct {
         fn from(val: T) -> Struct {
-            let a: Struct = Struct { t: val };
-            a
+            {
+                let a: Struct = Struct { t: val };
+                a
+            }
         }
     }
 
@@ -63,4 +65,23 @@ fn associated_const() {
 
     let s = Struct { t: "t" };
     assert!(s.get_def().is_none());
+}
+
+#[test]
+fn inner_fn() {
+    impl Def<String> for String {
+        const DEF: Option<String> = None;
+
+        fn get_def(&self) -> Option<String> {
+            return inner(self.into()).map(|s| s.t).cloned();
+
+            #[autogen::apply]
+            fn inner(s: Struct) -> Option<Struct> {
+                Some(s)
+            }
+        }
+    }
+
+    let string = "abc".to_string();
+    assert_eq!(string.get_def().unwrap(), "abc");
 }
