@@ -5,10 +5,13 @@ struct Struct<T: Display> {
     t: T,
 }
 
-trait Def<T> {
+trait Def<T>
+where
+    Self: Sized,
+{
     const DEF: Option<T>;
 
-    fn get_def(&self) -> Option<T> {
+    fn get_def(self) -> Option<T> {
         Self::DEF
     }
 }
@@ -69,19 +72,21 @@ fn associated_const() {
 
 #[test]
 fn inner_fn() {
-    impl Def<String> for String {
-        const DEF: Option<String> = None;
+    #[autogen::apply]
+    impl Def<Struct> for T {
+        const DEF: Option<Struct> = None;
 
-        fn get_def(&self) -> Option<String> {
-            return inner(self.into()).map(|s| s.t).cloned();
-
+        fn get_def(self) -> Option<Struct> {
             #[autogen::apply]
-            fn inner(s: Struct) -> Option<Struct> {
+            fn inner(t: T) -> Option<Struct> {
+                let s: Struct = Struct { t };
                 Some(s)
             }
+
+            inner(self)
         }
     }
 
     let string = "abc".to_string();
-    assert_eq!(string.get_def().unwrap(), "abc");
+    assert_eq!(string.get_def().unwrap().t, "abc");
 }

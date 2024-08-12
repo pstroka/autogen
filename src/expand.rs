@@ -4,9 +4,9 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
 use syn::{
-    parse2, punctuated::Punctuated, spanned::Spanned, token::PathSep, Block, Error, Expr, FnArg,
-    GenericArgument, Generics, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, Local, Pat, Path,
-    PathArguments, PathSegment, Result, ReturnType, Signature, Stmt, Type, TypeTuple,
+    parse2, punctuated::Punctuated, spanned::Spanned, Block, Error, Expr, FnArg, GenericArgument,
+    Generics, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, Pat, Path, PathArguments, PathSegment,
+    Result, ReturnType, Signature, Stmt, Type,
 };
 use try_match::match_ok;
 
@@ -97,12 +97,9 @@ trait Expand {
 impl Expand for ItemImpl {
     fn expand(&mut self, args: &Args) -> Results {
         let mut results = self.self_ty.expand(args);
-        self.items
-            .iter_mut()
-            .flat_map(|item| item.expand(args))
-            .for_each(|result| results.push(result));
+        results.append(self.items.expand(args).borrow_mut());
         if let Some((_, path, _)) = self.trait_.borrow_mut() {
-            results.append(path.segments.expand(args).borrow_mut());
+            results.append(path.expand(args).borrow_mut());
         }
         results
     }
@@ -129,35 +126,49 @@ impl Expand for ImplItemFn {
 
 impl Expand for Signature {
     fn expand(&mut self, args: &Args) -> Results {
-        let mut results: Vec<_> = self
-            .inputs
-            .iter_mut()
-            .filter_map(match_ok!(, FnArg::Typed(typed)))
-            .flat_map(|ty| ty.ty.expand(args))
-            .collect();
-        if let ReturnType::Type(_, ty) = self.output.borrow_mut() {
-            results.append(ty.expand(args).borrow_mut());
-        }
+        let mut results: Vec<_> = self.inputs.expand(args);
+        results.append(self.output.expand(args).borrow_mut());
         results
+    }
+}
+
+impl Expand for FnArg {
+    fn expand(&mut self, args: &Args) -> Results {
+        match_ok!(self, FnArg::Typed(typed))
+            .iter_mut()
+            .flat_map(|ty| ty.ty.expand(args))
+            .collect()
+    }
+}
+
+impl Expand for ReturnType {
+    fn expand(&mut self, args: &Args) -> Results {
+        match self {
+            ReturnType::Default => vec![],
+            ReturnType::Type(_, ty) => ty.expand(args),
+        }
     }
 }
 
 impl Expand for Block {
     fn expand(&mut self, args: &Args) -> Results {
-        self.stmts
-            .iter_mut()
-            .flat_map(|s| match s {
-                Stmt::Local(loc) => loc.expand(args),
-                Stmt::Expr(expr, _) => expr.expand(args),
-                _ => vec![],
-            })
-            .collect()
+        self.stmts.expand(args)
     }
 }
 
-impl Expand for Local {
+impl Expand for Stmt {
     fn expand(&mut self, args: &Args) -> Results {
-        match self.pat.borrow_mut() {
+        match self {
+            Stmt::Local(loc) => loc.pat.expand(args),
+            Stmt::Expr(expr, _) => expr.expand(args),
+            _ => vec![],
+        }
+    }
+}
+
+impl Expand for Pat {
+    fn expand(&mut self, args: &Args) -> Results {
+        match self {
             Pat::Type(ty) => ty.ty.expand(args),
             _ => vec![],
         }
@@ -190,20 +201,20 @@ impl Expand for Expr {
             // Expr::Lit(_) => todo!(),
             // Expr::Loop(_) => todo!(),
             // Expr::Macro(_) => todo!(),
-            // Expr::Match(_) => todo!(),
+            // Expr::Match(m) => ,
             // Expr::MethodCall(_) => todo!(),
             // Expr::Paren(_) => todo!(),
-            // Expr::Path(_) => todo!(),
+            // Expr::Path(p) => p.path.expand(args),
             // Expr::Range(_) => todo!(),
-            // Expr::Reference(_) => todo!(),
+            // Expr::Reference(r) => r.expr.expand(args),
             // Expr::Repeat(_) => todo!(),
             // Expr::Return(_) => todo!(),
             // Expr::Struct(_) => todo!(),
             // Expr::Try(_) => todo!(),
             // Expr::TryBlock(_) => todo!(),
-            // Expr::Tuple(_) => todo!(),
+            // Expr::Tuple(expr) => expr.elems.expand(args),
             // Expr::Unary(_) => todo!(),
-            // Expr::Unsafe(_) => todo!(),
+            Expr::Unsafe(expr) => expr.block.expand(args),
             // Expr::Verbatim(_) => todo!(),
             // Expr::While(_) => todo!(),
             // Expr::Yield(_) => todo!(),
@@ -222,36 +233,60 @@ impl Expand for ItemFn {
 
 impl Expand for Path {
     fn expand(&mut self, args: &Args) -> Results {
-        let mut results = self.segments.expand(args);
-        let segment = self
-            .segments
-            .last_mut()
-            .expect("a path has to have at least one segment");
-        let id = args.custom_id.as_ref().unwrap_or(&segment.ident);
-        if let Some(result) = find_generics(&segment.ident, id).transpose() {
+        self.segments.expand(args)
+    }
+}
+
+impl<T: Expand, P> Expand for Punctuated<T, P> {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.iter_mut().flat_map(|t| t.expand(args)).collect()
+    }
+}
+
+impl<T: Expand> Expand for Vec<T> {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.iter_mut().flat_map(|t| t.expand(args)).collect()
+    }
+}
+
+impl Expand for PathSegment {
+    fn expand(&mut self, args: &Args) -> Results {
+        fn expand_ident(segment: &mut PathSegment, args: &Args) -> Option<Result<Generics>> {
+            let id = args.custom_id.as_ref().unwrap_or(&segment.ident);
+            let result = find_generics(&segment.ident, id).transpose()?;
             if let Ok(generics) = result {
                 let ty_generics = generics.split_for_impl().1;
                 let mut arguments = segment.arguments.to_token_stream();
                 arguments.append_all(ty_generics.to_token_stream());
-                // if it cannot be parsed, it usually means that the type has manually set generics
+                // this shouldn't fail anymore, but I'm leaving the old behavior just in case
                 if let Ok(arguments) = parse2(arguments) {
                     segment.arguments = PathArguments::AngleBracketed(arguments);
-                    results.push(Ok(generics));
+                    Some(Ok(generics))
+                } else {
+                    None
                 }
             } else {
-                results.push(result);
+                Some(result)
             }
         }
-        results
+
+        match self.arguments.borrow_mut() {
+            PathArguments::None => expand_ident(self, args).into_iter().collect(),
+            PathArguments::AngleBracketed(a) => a.args.expand(args),
+            PathArguments::Parenthesized(a) => {
+                let mut results = a.inputs.expand(args);
+                results.append(a.output.expand(args).borrow_mut());
+                results
+            }
+        }
     }
 }
 
-impl Expand for Punctuated<PathSegment, PathSep> {
+impl Expand for GenericArgument {
     fn expand(&mut self, args: &Args) -> Results {
-        self.iter_mut()
-            .filter_map(|seg| match_ok!(&mut seg.arguments, PathArguments::AngleBracketed(args)))
-            .flat_map(|args| &mut args.args)
-            .filter_map(|arg| match_ok!(arg, GenericArgument::Type(ty)))
+        // TODO: check if the other variants are needed
+        match_ok!(self, GenericArgument::Type(ty))
+            .iter_mut()
             .flat_map(|ty| ty.expand(args))
             .collect()
     }
@@ -265,17 +300,8 @@ impl Expand for Type {
             Type::Ptr(ty) => ty.elem.expand(args),
             Type::Reference(ty) => ty.elem.expand(args),
             Type::Slice(ty) => ty.elem.expand(args),
-            Type::Tuple(ty) => ty.expand(args),
+            Type::Tuple(ty) => ty.elems.expand(args),
             _ => vec![],
         }
-    }
-}
-
-impl Expand for TypeTuple {
-    fn expand(&mut self, args: &Args) -> Results {
-        self.elems
-            .iter_mut()
-            .flat_map(|elem| elem.expand(args))
-            .collect()
     }
 }
