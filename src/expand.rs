@@ -1,12 +1,16 @@
-use std::borrow::BorrowMut;
+use std::{borrow::BorrowMut, ops::DerefMut};
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{ToTokens, TokenStreamExt};
 use syn::{
-    parse2, punctuated::Punctuated, spanned::Spanned, Block, Error, Expr, FnArg, GenericArgument,
-    Generics, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, Pat, Path, PathArguments, PathSegment,
-    Result, ReturnType, Signature, Stmt, Type,
+    parse2,
+    punctuated::Punctuated,
+    spanned::Spanned,
+    token::{For, Not},
+    BareFnArg, Block, Error, Expr, FnArg, GenericArgument, Generics, ImplItem, ImplItemFn, Item,
+    ItemFn, ItemImpl, Pat, Path, PathArguments, PathSegment, Result, ReturnType, Signature, Stmt,
+    Type,
 };
 use try_match::match_ok;
 
@@ -15,6 +19,18 @@ use crate::{
     generics::{find_generics, find_ident_by_id},
     unique_vec::UniqueVec,
 };
+
+macro_rules! expand {
+    ($args:expr, $first:expr, $($x:expr),*) => {
+        {
+            let mut results = $first.expand($args);
+            $(
+                results.append($x.expand($args).borrow_mut());
+            )*
+            results
+        }
+    };
+}
 
 type Results = Vec<Result<Generics>>;
 
@@ -27,6 +43,7 @@ pub(crate) fn expand_item(item: Item, args: Args) -> TokenStream {
             .into(),
     }
 }
+
 trait ExpandItem: Expand + ToTokens {
     fn expand_item(&mut self, args: &Args) -> TokenStream {
         let results = self.expand(args);
@@ -96,12 +113,14 @@ trait Expand {
 
 impl Expand for ItemImpl {
     fn expand(&mut self, args: &Args) -> Results {
-        let mut results = self.self_ty.expand(args);
-        results.append(self.items.expand(args).borrow_mut());
-        if let Some((_, path, _)) = self.trait_.borrow_mut() {
-            results.append(path.expand(args).borrow_mut());
-        }
-        results
+        expand!(args, self.self_ty, self.items, self.trait_)
+    }
+}
+
+type TraitDef = (Option<Not>, Path, For);
+impl Expand for TraitDef {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.1.expand(args)
     }
 }
 
@@ -118,26 +137,25 @@ impl Expand for ImplItem {
 
 impl Expand for ImplItemFn {
     fn expand(&mut self, args: &Args) -> Results {
-        let mut results: Vec<_> = self.sig.expand(args);
-        results.append(self.block.expand(args).borrow_mut());
-        results
+        expand!(args, self.sig, self.block)
     }
 }
 
 impl Expand for Signature {
     fn expand(&mut self, args: &Args) -> Results {
-        let mut results: Vec<_> = self.inputs.expand(args);
-        results.append(self.output.expand(args).borrow_mut());
-        results
+        expand!(args, self.inputs, self.output)
     }
 }
 
 impl Expand for FnArg {
     fn expand(&mut self, args: &Args) -> Results {
-        match_ok!(self, FnArg::Typed(typed))
-            .iter_mut()
-            .flat_map(|ty| ty.ty.expand(args))
-            .collect()
+        match_ok!(self, FnArg::Typed(typed) => typed.ty.as_mut()).expand(args)
+    }
+}
+
+impl Expand for BareFnArg {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.ty.expand(args)
     }
 }
 
@@ -158,6 +176,7 @@ impl Expand for Block {
 
 impl Expand for Stmt {
     fn expand(&mut self, args: &Args) -> Results {
+        // TODO: check if the other variants are needed
         match self {
             Stmt::Local(loc) => loc.pat.expand(args),
             Stmt::Expr(expr, _) => expr.expand(args),
@@ -168,6 +187,7 @@ impl Expand for Stmt {
 
 impl Expand for Pat {
     fn expand(&mut self, args: &Args) -> Results {
+        // TODO: check if the other variants are needed
         match self {
             Pat::Type(ty) => ty.ty.expand(args),
             _ => vec![],
@@ -179,45 +199,45 @@ impl Expand for Expr {
     fn expand(&mut self, args: &Args) -> Results {
         // TODO: check which ones must be implemented
         match self {
-            // Expr::Array(_) => todo!(),
-            // Expr::Assign(_) => todo!(),
-            // Expr::Async(_) => todo!(),
-            // Expr::Await(_) => todo!(),
-            // Expr::Binary(_) => todo!(),
-            Expr::Block(block) => block.block.expand(args),
-            // Expr::Break(_) => todo!(),
-            // Expr::Call(_) => todo!(),
-            // Expr::Cast(_) => todo!(),
-            // Expr::Closure(_) => todo!(),
-            // Expr::Const(_) => todo!(),
-            // Expr::Continue(_) => todo!(),
-            // Expr::Field(_) => todo!(),
-            // Expr::ForLoop(_) => todo!(),
-            // Expr::Group(_) => todo!(),
-            // Expr::If(_) => todo!(),
-            // Expr::Index(_) => todo!(),
-            // Expr::Infer(_) => todo!(),
-            // Expr::Let(_) => todo!(),
-            // Expr::Lit(_) => todo!(),
-            // Expr::Loop(_) => todo!(),
-            // Expr::Macro(_) => todo!(),
+            // Expr::Array(expr) => expr, X
+            // Expr::Assign(expr) => expr, ?
+            Expr::Async(expr) => expr.block.expand(args),
+            // Expr::Await(expr) => expr, ?
+            // Expr::Binary(expr) => expr, ?
+            Expr::Block(expr) => expr.block.expand(args),
+            // Expr::Break(expr) => expr, ?
+            // Expr::Call(expr) => expr, ?
+            Expr::Cast(expr) => expr.ty.expand(args),
+            Expr::Closure(expr) => expand!(args, expr.inputs, expr.output, expr.body),
+            // Expr::Const(expr) => expr,
+            // Expr::Continue(expr) => expr,
+            // Expr::Field(expr) => expr,
+            // Expr::ForLoop(expr) => expr,
+            // Expr::Group(expr) => expr,
+            // Expr::If(expr) => expr,
+            // Expr::Index(expr) => expr,
+            // Expr::Infer(expr) => expr,
+            // Expr::Let(expr) => expr,
+            // Expr::Lit(expr) => expr,
+            // Expr::Loop(expr) => expr,
+            // Expr::Macro(expr) => expr,
             // Expr::Match(m) => ,
-            // Expr::MethodCall(_) => todo!(),
-            // Expr::Paren(_) => todo!(),
+            // Expr::MethodCall(expr) => expr,
+            // Expr::Paren(expr) => expr,
             // Expr::Path(p) => p.path.expand(args),
-            // Expr::Range(_) => todo!(),
+            // Expr::Range(expr) => expr,
             // Expr::Reference(r) => r.expr.expand(args),
-            // Expr::Repeat(_) => todo!(),
-            // Expr::Return(_) => todo!(),
-            // Expr::Struct(_) => todo!(),
-            // Expr::Try(_) => todo!(),
-            // Expr::TryBlock(_) => todo!(),
+            // Expr::Repeat(expr) => expr,
+            // Expr::Return(expr) => expr,
+            // Expr::Struct(expr) => expr,
+            // Expr::Try(expr) => expr,
+            // Expr::TryBlock(expr) => expr,
             // Expr::Tuple(expr) => expr.elems.expand(args),
-            // Expr::Unary(_) => todo!(),
+            // Expr::Unary(expr) => expr,
             Expr::Unsafe(expr) => expr.block.expand(args),
-            // Expr::Verbatim(_) => todo!(),
-            // Expr::While(_) => todo!(),
-            // Expr::Yield(_) => todo!(),
+            // Expr::Verbatim(expr) => expr,
+            // Expr::While(expr) => expr,
+            // Expr::Yield(expr) => expr,
             _ => vec![],
         }
     }
@@ -225,9 +245,7 @@ impl Expand for Expr {
 
 impl Expand for ItemFn {
     fn expand(&mut self, args: &Args) -> Results {
-        let mut results = self.sig.expand(args);
-        results.append(self.block.expand(args).borrow_mut());
-        results
+        expand!(args, self.sig, self.block)
     }
 }
 
@@ -246,6 +264,21 @@ impl<T: Expand, P> Expand for Punctuated<T, P> {
 impl<T: Expand> Expand for Vec<T> {
     fn expand(&mut self, args: &Args) -> Results {
         self.iter_mut().flat_map(|t| t.expand(args)).collect()
+    }
+}
+
+impl<T: Expand> Expand for &mut T {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.deref_mut().expand(args)
+    }
+}
+
+impl<T: Expand> Expand for Option<T> {
+    fn expand(&mut self, args: &Args) -> Results {
+        match self {
+            Some(t) => t.expand(args),
+            None => vec![],
+        }
     }
 }
 
@@ -273,11 +306,7 @@ impl Expand for PathSegment {
         match self.arguments.borrow_mut() {
             PathArguments::None => expand_ident(self, args).into_iter().collect(),
             PathArguments::AngleBracketed(a) => a.args.expand(args),
-            PathArguments::Parenthesized(a) => {
-                let mut results = a.inputs.expand(args);
-                results.append(a.output.expand(args).borrow_mut());
-                results
-            }
+            PathArguments::Parenthesized(a) => expand!(args, a.inputs, a.output),
         }
     }
 }
@@ -285,10 +314,7 @@ impl Expand for PathSegment {
 impl Expand for GenericArgument {
     fn expand(&mut self, args: &Args) -> Results {
         // TODO: check if the other variants are needed
-        match_ok!(self, GenericArgument::Type(ty))
-            .iter_mut()
-            .flat_map(|ty| ty.expand(args))
-            .collect()
+        match_ok!(self, GenericArgument::Type(ty)).expand(args)
     }
 }
 
@@ -296,6 +322,9 @@ impl Expand for Type {
     fn expand(&mut self, args: &Args) -> Results {
         match self {
             Type::Array(ty) => ty.elem.expand(args),
+            Type::BareFn(ty) => expand!(args, ty.inputs, ty.output),
+            Type::Group(ty) => ty.elem.expand(args),
+            Type::Paren(ty) => ty.elem.expand(args),
             Type::Path(ty) => ty.path.expand(args),
             Type::Ptr(ty) => ty.elem.expand(args),
             Type::Reference(ty) => ty.elem.expand(args),
