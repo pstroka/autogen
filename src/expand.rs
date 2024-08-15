@@ -37,8 +37,8 @@ type Results = Vec<Result<Generics>>;
 
 pub(crate) fn expand_item(item: Item, args: Args) -> TokenStream {
     match item {
-        Item::Fn(mut fn_item) => fn_item.expand_item(&args),
-        Item::Impl(mut impl_item) => impl_item.expand_item(&args),
+        Item::Fn(mut item) => item.expand_item(&args),
+        Item::Impl(mut item) => item.expand_item(&args),
         _ => Error::new(item.span(), "expected `impl` or `fn`")
             .to_compile_error()
             .into(),
@@ -180,11 +180,10 @@ impl Expand for TraitDef {
 
 impl Expand for ImplItem {
     fn expand(&mut self, args: &Args) -> Results {
-        // TODO: check if the generics in const and type need to be expanded
         match self {
-            ImplItem::Const(item) => expand!(args, item.ty, item.expr),
+            ImplItem::Const(item) => expand!(args, item.ty, item.expr, item.generics),
             ImplItem::Fn(item) => item.expand(args),
-            ImplItem::Type(item) => item.ty.expand(args),
+            ImplItem::Type(item) => expand!(args, item.ty, item.generics),
             _ => vec![],
         }
     }
@@ -204,7 +203,7 @@ impl Expand for Signature {
 
 impl Expand for FnArg {
     fn expand(&mut self, args: &Args) -> Results {
-        match_ok!(self, FnArg::Typed(typed) => typed.ty.as_mut()).expand(args)
+        match_ok!(self, FnArg::Typed(arg) => arg.ty.as_mut()).expand(args)
     }
 }
 
@@ -291,12 +290,12 @@ impl Expand for Expr {
             // Expr::Lit(expr) => expr,
             // Expr::Loop(expr) => expr,
             // Expr::Macro(expr) => expr,
-            // Expr::Match(m) => ,
+            // Expr::Match(expr) => ,
             Expr::MethodCall(expr) => expr.turbofish.expand(args),
             // Expr::Paren(expr) => expr,
             Expr::Path(expr) => expr.path.expand(args),
             // Expr::Range(expr) => expr,
-            Expr::Reference(r) => r.expr.expand(args),
+            Expr::Reference(expr) => expr.expr.expand(args),
             // Expr::Repeat(expr) => expr,
             // Expr::Return(expr) => expr,
             // Expr::Struct(expr) => expr,
@@ -349,8 +348,12 @@ impl<T: Expand> Expand for Option<T> {
 impl Expand for PathSegment {
     fn expand(&mut self, args: &Args) -> Results {
         fn expand_ident(segment: &mut PathSegment, args: &Args) -> Option<Result<Generics>> {
-            let id = args.custom_id.as_ref().unwrap_or(&segment.ident);
-            let result = find_generics(&segment.ident, id).transpose()?;
+            if args.is_replaced(&segment.ident) {
+                return None;
+            }
+            let (ident, id) = args.ids(&segment.ident);
+            let result = find_generics(ident, id).transpose()?;
+            args.replace_ident(segment);
             if let Ok(generics) = result {
                 let ty_generics = generics.split_for_impl().1;
                 let mut arguments = segment.arguments.to_token_stream();

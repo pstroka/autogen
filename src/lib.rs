@@ -44,8 +44,6 @@ mod expand;
 mod generics;
 mod unique_vec;
 
-use std::borrow::BorrowMut;
-
 use args::Args;
 use expand::expand_item;
 use generics::register_generics;

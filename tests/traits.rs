@@ -17,6 +17,12 @@ where
     }
 }
 
+trait S {
+    type Struct;
+
+    fn get(&self) -> &Self::Struct;
+}
+
 #[test]
 fn trait_generic_arg_as_input() {
     #[autogen::apply]
@@ -56,7 +62,17 @@ fn associated_type_and_const() {
         const DEF: Option<Struct> = None;
     }
 
+    #[autogen::apply(Struct2 = Struct)]
+    impl S for Struct2 {
+        type Struct = Struct2;
+
+        fn get(&self) -> &Self::Struct {
+            self
+        }
+    }
+
     let s = Struct { t: "t" };
+    assert_eq!(s.get().t, s.t);
     assert!(s.get_def().is_none());
 }
 
