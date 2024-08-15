@@ -9,9 +9,10 @@ trait Def<T>
 where
     Self: Sized,
 {
-    const DEF: Option<T>;
+    type Item;
+    const DEF: Option<Self::Item>;
 
-    fn get_def(self) -> Option<T> {
+    fn get_def(self) -> Option<Self::Item> {
         Self::DEF
     }
 }
@@ -48,21 +49,10 @@ fn trait_generic_arg_as_output() {
 }
 
 #[test]
-fn associated_type() {
-    #[autogen::apply]
-    impl Iterator for Struct {
-        type Item = Struct;
-
-        fn next(&mut self) -> Option<Struct> {
-            None
-        }
-    }
-}
-
-#[test]
-fn associated_const() {
+fn associated_type_and_const() {
     #[autogen::apply]
     impl Def<Struct> for Struct {
+        type Item = Struct;
         const DEF: Option<Struct> = None;
     }
 
@@ -74,6 +64,7 @@ fn associated_const() {
 fn inner_fn() {
     #[autogen::apply]
     impl Def<Struct> for T {
+        type Item = Struct;
         const DEF: Option<Struct> = None;
 
         fn get_def(self) -> Option<Struct> {
@@ -89,4 +80,46 @@ fn inner_fn() {
 
     let string = "abc".to_string();
     assert_eq!(string.get_def().unwrap().t, "abc");
+}
+
+#[test]
+fn expressions() {
+    #[autogen::apply]
+    impl Iterator for Struct {
+        type Item = Struct;
+
+        fn next(&mut self) -> Option<Struct> {
+            None
+        }
+    }
+
+    #[autogen::apply(debug = test)]
+    impl From<Box<dyn Iterator<Item = Struct>>> for Struct {
+        fn from(value: Box<dyn Iterator<Item = Struct>>) -> Self {
+            let from_str = Struct::from("abc".to_string());
+            let _aa: String = test3(from_str);
+            let vec = value.collect::<Vec<Struct>>();
+            let s: &Struct = &vec[calc_index::<&Struct>(&vec.iter())];
+            test(s);
+            test2::<Struct>(s)
+        }
+    }
+
+    #[autogen::apply]
+    fn test(_value: &impl Iterator<Item = Struct>) -> Struct {
+        todo!()
+    }
+
+    fn test2<T>(_value: &impl Iterator<Item = T>) -> T {
+        todo!()
+    }
+
+    fn calc_index<T>(_value: &impl Iterator<Item = T>) -> usize {
+        todo!()
+    }
+
+    #[autogen::apply]
+    fn test3<S: From<Struct>>(value: Struct) -> S {
+        value.into()
+    }
 }
