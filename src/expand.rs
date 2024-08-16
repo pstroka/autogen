@@ -7,11 +7,11 @@ use syn::{
     parse2,
     punctuated::Punctuated,
     spanned::Spanned,
-    token::{Else, For, Not},
-    AngleBracketedGenericArguments, BareFnArg, Block, Error, Expr, FnArg, GenericArgument,
-    GenericParam, Generics, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, LocalInit, Pat, Path,
-    PathArguments, PathSegment, Result, ReturnType, Signature, Stmt, Type, TypeParamBound,
-    WhereClause, WherePredicate,
+    token::{Else, For, If, Not},
+    AngleBracketedGenericArguments, Arm, BareFnArg, Block, Error, Expr, FieldValue, FnArg,
+    GenericArgument, GenericParam, Generics, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl,
+    LocalInit, Pat, Path, PathArguments, PathSegment, Result, ReturnType, Signature, Stmt, Type,
+    TypeParamBound, WhereClause, WherePredicate,
 };
 use try_match::match_ok;
 
@@ -29,6 +29,12 @@ macro_rules! expand {
                 results.append($x.expand($args).borrow_mut());
             )*
             results
+        }
+    };
+
+    ($args:expr, $first:expr) => {
+        {
+            $first.expand($args)
         }
     };
 }
@@ -257,6 +263,13 @@ impl Expand for LocalInit {
     }
 }
 
+type IfDef = (If, Box<Expr>);
+impl Expand for IfDef {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.1.expand(args)
+    }
+}
+
 type ElseDef = (Else, Box<Expr>);
 impl Expand for ElseDef {
     fn expand(&mut self, args: &Args) -> Results {
@@ -264,49 +277,57 @@ impl Expand for ElseDef {
     }
 }
 
+impl Expand for Arm {
+    fn expand(&mut self, args: &Args) -> Results {
+        expand!(args, self.pat, self.guard, self.body)
+    }
+}
+
+impl Expand for FieldValue {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.expr.expand(args)
+    }
+}
+
 impl Expand for Expr {
     fn expand(&mut self, args: &Args) -> Results {
-        // TODO: check which ones must be implemented
         match self {
-            // Expr::Array(expr) => expr, X
-            // Expr::Assign(expr) => expr, ?
+            Expr::Array(expr) => expr.elems.expand(args),
+            Expr::Assign(expr) => expand!(args, expr.left, expr.right),
             Expr::Async(expr) => expr.block.expand(args),
-            // Expr::Await(expr) => expr, ?
-            // Expr::Binary(expr) => expr, ?
+            Expr::Await(expr) => expr.base.expand(args),
+            Expr::Binary(expr) => expand!(args, expr.left, expr.right),
             Expr::Block(expr) => expr.block.expand(args),
-            // Expr::Break(expr) => expr, ?
-            Expr::Call(expr) => expr.func.expand(args),
-            Expr::Cast(expr) => expr.ty.expand(args),
+            Expr::Break(expr) => expr.expr.expand(args),
+            Expr::Call(expr) => expand!(args, expr.func, expr.args),
+            Expr::Cast(expr) => expand!(args, expr.ty, expr.expr),
             Expr::Closure(expr) => expand!(args, expr.inputs, expr.output, expr.body),
-            // Expr::Const(expr) => expr,
-            // Expr::Continue(expr) => expr,
-            // Expr::Field(expr) => expr,
-            // Expr::ForLoop(expr) => expr,
+            Expr::Const(expr) => expr.block.expand(args),
+            Expr::Field(expr) => expr.base.expand(args),
+            Expr::ForLoop(expr) => expand!(args, expr.expr, expr.body, expr.pat),
             Expr::Group(expr) => expr.expr.expand(args),
-            // Expr::If(expr) => expr,
+            Expr::If(expr) => expand!(args, expr.cond, expr.then_branch, expr.else_branch),
             Expr::Index(expr) => expand!(args, expr.index, expr.expr),
-            // Expr::Infer(expr) => expr,
-            // Expr::Let(expr) => expr,
-            // Expr::Lit(expr) => expr,
-            // Expr::Loop(expr) => expr,
-            // Expr::Macro(expr) => expr,
-            // Expr::Match(expr) => ,
-            Expr::MethodCall(expr) => expr.turbofish.expand(args),
-            // Expr::Paren(expr) => expr,
+            Expr::Let(expr) => expand!(args, expr.pat, expr.expr),
+            Expr::Loop(expr) => expr.body.expand(args),
+            Expr::Match(expr) => expand!(args, expr.expr, expr.arms),
+            Expr::MethodCall(expr) => expand!(args, expr.receiver, expr.args, expr.turbofish),
+            Expr::Paren(expr) => expr.expr.expand(args),
             Expr::Path(expr) => expr.path.expand(args),
-            // Expr::Range(expr) => expr,
+            Expr::Range(expr) => expand!(args, expr.start, expr.end),
             Expr::Reference(expr) => expr.expr.expand(args),
-            // Expr::Repeat(expr) => expr,
-            // Expr::Return(expr) => expr,
-            // Expr::Struct(expr) => expr,
-            // Expr::Try(expr) => expr,
-            // Expr::TryBlock(expr) => expr,
-            // Expr::Tuple(expr) => expr.elems.expand(args),
-            // Expr::Unary(expr) => expr,
+            Expr::Repeat(expr) => expand!(args, expr.expr, expr.len),
+            Expr::Return(expr) => expr.expr.expand(args),
+            Expr::Struct(expr) => expand!(args, expr.fields, expr.rest),
+            Expr::Try(expr) => expr.expr.expand(args),
+            // NOTE: this feature is experimental
+            Expr::TryBlock(expr) => expr.block.expand(args),
+            Expr::Tuple(expr) => expr.elems.expand(args),
+            Expr::Unary(expr) => expr.expr.expand(args),
             Expr::Unsafe(expr) => expr.block.expand(args),
-            // Expr::Verbatim(expr) => expr,
-            // Expr::While(expr) => expr,
-            // Expr::Yield(expr) => expr,
+            Expr::While(expr) => expand!(args, expr.cond, expr.body),
+            // NOTE: this feature is experimental
+            Expr::Yield(expr) => expr.expr.expand(args),
             _ => vec![],
         }
     }
@@ -331,6 +352,12 @@ impl<T: Expand> Expand for Vec<T> {
 }
 
 impl<T: Expand> Expand for &mut T {
+    fn expand(&mut self, args: &Args) -> Results {
+        self.deref_mut().expand(args)
+    }
+}
+
+impl<T: Expand> Expand for Box<T> {
     fn expand(&mut self, args: &Args) -> Results {
         self.deref_mut().expand(args)
     }

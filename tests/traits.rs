@@ -1,8 +1,16 @@
-use std::fmt::Display;
+use std::{fmt::Display, pin::Pin};
 
 #[autogen::register]
-struct Struct<T: Display> {
+struct Struct<T: Display + Clone + PartialEq> {
     t: T,
+    y: T,
+}
+
+#[autogen::apply]
+impl Struct {
+    fn result<E>(&self, _e: E) -> Result<Struct, E> {
+        todo!()
+    }
 }
 
 trait Def<T>
@@ -32,7 +40,7 @@ fn trait_generic_arg_as_input() {
         }
     }
 
-    let s = Struct { t: "abc" };
+    let s = Struct { t: "abc", y: "y" };
     let string: String = s.into();
     assert_eq!(string, "abc as string");
 }
@@ -43,7 +51,10 @@ fn trait_generic_arg_as_output() {
     impl From<T> for Struct {
         fn from(val: T) -> Struct {
             {
-                let a: Struct = Struct { t: val };
+                let a: Struct = Struct {
+                    t: val.clone(),
+                    y: val,
+                };
                 a
             }
         }
@@ -71,7 +82,7 @@ fn associated_type_and_const() {
         }
     }
 
-    let s = Struct { t: "t" };
+    let s = Struct { t: "t", y: "y" };
     assert_eq!(s.get().t, s.t);
     assert!(s.get_def().is_none());
 }
@@ -86,7 +97,7 @@ fn inner_fn() {
         fn get_def(self) -> Option<Struct> {
             #[autogen::apply]
             fn inner(t: T) -> Option<Struct> {
-                let s: Struct = Struct { t };
+                let s: Struct = Struct { y: t.clone(), t };
                 Some(s)
             }
 
@@ -109,16 +120,119 @@ fn expressions() {
         }
     }
 
-    #[autogen::apply(debug = test)]
+    #[autogen::apply]
     impl From<Box<dyn Iterator<Item = Struct>>> for Struct {
         fn from(value: Box<dyn Iterator<Item = Struct>>) -> Self {
             let from_str = Struct::from("abc".to_string());
             let _aa: String = test3(from_str);
-            let vec = value.collect::<Vec<Struct>>();
+            // MethodCall
+            let _ = any::<Struct>().result::<Struct>(any::<Struct>());
+            let vec: Vec<Struct> = value.collect::<Vec<Struct>>().into_iter().collect();
+            // Index, Reference
             let s: &Struct = &vec[calc_index::<&Struct>(&vec.iter())];
+            // Binary
+            let mut x = calc_index::<&Struct>(&vec.iter()) + calc_index::<&Struct>(&vec.iter());
             test(s);
-            test2::<Struct>(s)
+            // Loop
+            let _ = loop {
+                // If
+                if x > 1 && s.t == any::<Struct>().t {
+                    // Break
+                    break Some(test2::<Struct>(s));
+                } else {
+                    // Field
+                    let _ = test2::<Struct>(s).t;
+                    // Assign
+                    x = calc_index::<&Struct>(&vec.iter()) + calc_index::<&Struct>(&vec.iter());
+                }
+            };
+
+            // Cast
+            let _ = s as *const Struct;
+
+            // Closure
+            let _: Vec<_> = vec
+                .iter()
+                .map(|s: &Struct| -> &Struct {
+                    if s.t == any::<&Struct>().y {
+                        s
+                    } else {
+                        any::<&Struct>()
+                    }
+                })
+                .collect();
+
+            // Unsafe
+            unsafe {
+                let a = &any::<Struct>();
+                Pin::new_unchecked(a);
+            }
+
+            // Const
+            let _: Struct = const { any::<Struct>() };
+
+            // Let
+            if let Some(a) = any::<Option<Struct>>() {
+                let _: Struct = a;
+            }
+
+            // ForLoop
+            for i in any::<Vec<Struct>>() {
+                let _: Struct = i;
+            }
+
+            // Match
+            let _ = match any::<Option<Struct>>() {
+                Some(some) => some,
+                // Return
+                None => return any::<Struct>(),
+            };
+
+            // Paren
+            (any::<Struct>());
+
+            // Range
+            for _ in to_any::<Struct, i32>()..to_any::<Struct, i32>() {
+                let x = to_any::<Struct, i32>();
+                println!("{x}");
+            }
+
+            // Repeat
+            let _ = [const { any::<Struct>() }; 2];
+
+            // Struct
+            let _ = Struct {
+                t: any::<Struct>().t,
+                ..any::<Struct>()
+            };
+
+            // Tuple
+            let _ = (any::<Struct>(), any::<Option<Struct>>());
+
+            // Unary
+            let _ = !to_any::<Struct, i32>();
+
+            // While
+            while to_any::<Struct, i32>() < 3 {
+                // Call
+                let _ = any::<Struct>();
+            }
+
+            try_test::<T>();
+
+            let _a = a1(s);
+
+            // Array
+            let array = [test2::<Struct>(s)];
+            array.into_iter().next().unwrap()
         }
+    }
+
+    #[autogen::apply]
+    fn try_test() -> Option<Struct> {
+        // Try
+        let val = any::<Option<Struct>>()?;
+        Some(val)
     }
 
     #[autogen::apply]
@@ -134,8 +248,31 @@ fn expressions() {
         todo!()
     }
 
+    const fn any<A>() -> A {
+        todo!()
+    }
+
+    fn to_any<A, B>() -> B {
+        any::<A>();
+        todo!()
+    }
+
     #[autogen::apply]
     fn test3<S: From<Struct>>(value: Struct) -> S {
+        value.into()
+    }
+
+    #[autogen::apply]
+    async fn a1(value: &impl Iterator<Item = Struct>) {
+        // Async
+        let a = async { any::<Struct>() };
+        a.await;
+        // Await
+        a2::<String, T>(test2::<Struct>(value)).await;
+    }
+
+    #[autogen::apply]
+    async fn a2<S: From<Struct>>(value: Struct) -> S {
         value.into()
     }
 }
