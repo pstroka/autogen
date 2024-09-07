@@ -42,6 +42,7 @@
 mod args;
 mod expand;
 mod generics;
+mod replacement;
 mod unique_vec;
 
 use args::Args;
@@ -313,7 +314,6 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// To learn how to apply generics with a custom identifier, see the
 /// [register](macro@register#using-a-custom-identifier) macro docs.
 #[proc_macro_attribute]
-// TODO: replace generics e.g. T0 = Self, T0 = T1, X = Y, D = String
 pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args with Punctuated::<Meta, Comma>::parse_terminated);
     let args: Args = match args.try_into() {

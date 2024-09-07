@@ -56,7 +56,7 @@ trait ExpandItem: Expand + ToTokens {
         let results = self.expand(args);
         match self.combine_results(results, args) {
             Ok(generics) => {
-                self.merge(generics);
+                self.merge(args, generics);
                 self.to_token_stream().into()
             }
             Err(err) => err.to_compile_error().into(),
@@ -99,22 +99,20 @@ trait ExpandItem: Expand + ToTokens {
         }
     }
 
-    fn merge(&mut self, generics: Generics) {
+    fn merge(&mut self, args: &Args, generics: Generics) {
         let original = self.generics();
         generics
             .params
             .into_iter()
+            .filter(|param| !args.is_replaced(param))
             .for_each(|param| original.params.push(param));
-        match original.where_clause.as_mut() {
-            Some(original_clause) => {
-                if let Some(clause) = generics.where_clause {
-                    clause
-                        .predicates
-                        .into_iter()
-                        .for_each(|pred| original_clause.predicates.push(pred))
-                }
-            }
-            None => original.where_clause = generics.where_clause,
+        if let Some(clause) = generics.where_clause {
+            let original_clause = original.make_where_clause();
+            clause
+                .predicates
+                .into_iter()
+                .filter(|pred| !args.is_replaced(pred))
+                .for_each(|pred| original_clause.predicates.push(pred))
         }
     }
 
@@ -246,11 +244,7 @@ impl Expand for Stmt {
 
 impl Expand for Pat {
     fn expand(&mut self, args: &Args) -> Results {
-        // TODO: check if the other variants are needed
         match self {
-            Pat::Const(pat) => pat.block.expand(args),
-            Pat::Or(pat) => pat.cases.expand(args),
-            Pat::Paren(pat) => pat.pat.expand(args),
             Pat::Type(pat) => expand!(args, pat.ty, pat.pat),
             _ => vec![],
         }
@@ -375,18 +369,19 @@ impl<T: Expand> Expand for Option<T> {
 impl Expand for PathSegment {
     fn expand(&mut self, args: &Args) -> Results {
         fn expand_ident(segment: &mut PathSegment, args: &Args) -> Option<Result<Generics>> {
-            if args.is_replaced(&segment.ident) {
+            if args.is_replacement(&segment.ident) {
                 return None;
             }
-            let (ident, id) = args.ids(&segment.ident);
-            let result = find_generics(ident, id).transpose()?;
-            args.replace_ident(segment);
+            args.replace(&mut segment.ident);
+            let id = args.custom_id.as_ref().unwrap_or(&segment.ident);
+            let result = find_generics(&segment.ident, id).transpose()?;
             if let Ok(generics) = result {
                 let ty_generics = generics.split_for_impl().1;
                 let mut arguments = segment.arguments.to_token_stream();
                 arguments.append_all(ty_generics.to_token_stream());
                 // this shouldn't fail anymore, but I'm leaving the old behavior just in case
-                if let Ok(arguments) = parse2(arguments) {
+                if let Ok(mut arguments) = parse2(arguments) {
+                    args.replace_arguments(&mut arguments);
                     segment.arguments = PathArguments::AngleBracketed(arguments);
                     Some(Ok(generics))
                 } else {
