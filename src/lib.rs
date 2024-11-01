@@ -187,7 +187,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
     register_generics(&item, custom_id).unwrap_or_else(|err| err.to_compile_error().into())
 }
 
-/// TODO: add new examples
+// TODO: add new examples
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
 /// the [register](macro@register) macro to an `impl` block or function.
 ///
@@ -229,12 +229,44 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// assert!(s.next().is_none());
 ///
 /// #[autogen::apply]
-/// impl From<Vec<Struct>> for Struct {
-///     fn from(vec: Vec<Struct>) -> Self {
-///         let next: Option<Struct> = vec.into_iter().next();
-///         next.unwrap()
+/// impl TryFrom<Vec<Struct>> for Struct {
+///     type Error = String;
+///
+///     fn try_from(vec: Vec<Struct>) -> Result<Struct, String> {
+///         let first: Option<Struct> = vec.into_iter().next();
+///         first.ok_or("empty".to_string())
 ///     }
 /// }
+///
+/// let vec = vec![s];
+/// let s: Struct<'_, _, _> = vec.try_into().unwrap();
+/// assert!(s.x_equals(&1));
+/// assert_eq!(s.y(), "abc");
+///
+/// #[autogen::apply]
+/// fn same_x(l: &Struct, r: &Struct) -> bool {
+///     l.x == r.x
+/// }
+///
+/// #[autogen::apply(R = T)]
+/// impl Struct {
+///     fn x_equals_y(&self) -> bool {
+///         self.x == *self.y
+///     }
+/// }
+///
+/// let s = Struct { x: 1, y: &1 };
+/// assert!(s.x_equals_y());
+///
+/// #[autogen::apply(T = String, R = str)]
+/// impl Struct {
+///     fn as_string(&self) -> String {
+///         format!("{} {}", self.x, self.y)
+///     }
+/// }
+///
+/// let s = Struct { x: "bo".to_string(), y: "ber" };
+/// assert_eq!(s.as_string(), "bo ber");
 /// ```
 /// The only restriction is that you cannot use different registered types in one `impl` block or
 /// function.
