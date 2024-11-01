@@ -6,12 +6,13 @@
 //!
 //! # autogen
 //!
-//! Tired of repeating all the generics in every `impl` block?
+//! Tired of repeating all the generics in every `impl` block or function?
 //!
-//! Autogen is a set of macros that allows you to automatically apply generics to `impl` blocks.
+//! Autogen is a set of macros that allows you to automatically apply generics to `impl` blocks and
+//! functions.
 //! - the [register](macro@register) macro registers the generics of a `struct` or `enum`,
-//! including lifetimes and the where clause.
-//! - the [apply](macro@apply) macro applies the generics to an `impl` block.
+//!   including lifetimes and the where clause.
+//! - the [apply](macro@apply) macro applies the generics to an `impl` block or function.
 //! ```
 //! #[autogen::register]
 //! struct Struct<'a, T, R: ?Sized>
@@ -52,7 +53,7 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, Ident, Item, Meta};
 
 /// This macro is used to register the generics of a `struct` or `enum` that can later be applied to
-/// an `impl` block with the [apply](macro@apply) macro.
+/// an `impl` block or function with the [apply](macro@apply) macro.
 ///
 /// # Examples
 ///
@@ -79,6 +80,15 @@ use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, Ident, Item, 
 /// let s = Struct { x: 1, y: "abc" };
 /// assert!(s.x_equals(&1));
 /// assert_eq!(s.y(), "abc");
+///
+/// #[autogen::apply]
+/// fn new(x: T, y: &'a R) -> Struct {
+///     Struct { x, y }
+/// }
+///
+/// let s = new(2, "def");
+/// assert!(s.x_equals(&2));
+/// assert_eq!(s.y(), "def");
 ///
 /// #[autogen::register]
 /// enum Enum<T, Y> {
@@ -179,7 +189,7 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 
 /// TODO: add new examples
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
-/// the [register](macro@register) macro to an `impl` block.
+/// the [register](macro@register) macro to an `impl` block or function.
 ///
 /// # Examples
 ///
@@ -203,97 +213,31 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 ///     }
 /// }
 ///
-/// trait Trait {
-///     fn type_of(&self) -> &'static str;
-/// }
+/// let mut s = Struct { x: 1, y: "abc" };
+/// assert!(s.x_equals(&1));
+/// assert_eq!(s.y(), "abc");
 ///
 /// #[autogen::apply]
-/// impl Trait for Struct {
-///     fn type_of(&self) -> &'static str {
-///         "regular"
+/// impl Iterator for Struct {
+///     type Item = Struct;
+///
+///     fn next(&mut self) -> Option<Struct> {
+///         None
 ///     }
 /// }
 ///
-/// #[autogen::apply]
-/// impl Trait for [Struct; 2] {
-///     fn type_of(&self) -> &'static str {
-///         "array of size 2"
-///     }
-/// }
+/// assert!(s.next().is_none());
 ///
 /// #[autogen::apply]
-/// impl Trait for [Struct] {
-///     fn type_of(&self) -> &'static str {
-///         "slice"
+/// impl From<Vec<Struct>> for Struct {
+///     fn from(vec: Vec<Struct>) -> Self {
+///         let next: Option<Struct> = vec.into_iter().next();
+///         next.unwrap()
 ///     }
 /// }
-///
-/// #[autogen::apply]
-/// impl Trait for &Struct {
-///     fn type_of(&self) -> &'static str {
-///         "reference"
-///     }
-/// }
-///
-/// #[autogen::apply]
-/// impl Trait for *const Struct {
-///     fn type_of(&self) -> &'static str {
-///         "pointer"
-///     }
-/// }
-///
-/// #[autogen::apply]
-/// impl Trait for (Struct, &'static str, Struct) {
-///     fn type_of(&self) -> &'static str {
-///         "tuple"
-///     }
-/// }
-///
-/// #[autogen::apply]
-/// impl Trait for Result<Struct, String> {
-///     fn type_of(&self) -> &'static str {
-///         "generic argument"
-///     }
-/// }
-///
-/// #[autogen::apply]
-/// impl Trait for [([Option<&Struct>; 1], Struct, String)] {
-///     fn type_of(&self) -> &'static str {
-///         "crazy ****"
-///     }
-/// }
-///
-/// let struct1 = Struct { x: 1, y: "abc" };
-/// assert!(struct1.x_equals(&1));
-/// assert_eq!(struct1.y(), "abc");
-///
-/// assert_eq!(struct1.type_of(), "regular");
-/// assert_eq!((&&struct1).type_of(), "reference");
-///
-/// let pointer = &struct1 as *const Struct<'_, i32, str>;
-/// assert_eq!(pointer.type_of(), "pointer");
-///
-/// let struct2 = Struct { x: 2, y: "xyz" };
-/// assert!(struct2.x_equals(&2));
-/// assert_eq!(struct2.y(), "xyz");
-///
-/// let tuple = (struct1, "string", struct2);
-/// assert_eq!(tuple.type_of(), "tuple");
-///
-/// let array = [tuple.0, tuple.2];
-/// assert_eq!(array.type_of(), "array of size 2");
-/// assert_eq!(array[..].type_of(), "slice");
-///
-/// let struct3 = Struct { x: -1, y: "b" };
-/// let result: Result<_, String> = Ok(struct3);
-/// assert_eq!(result.type_of(), "generic argument");
-///
-/// let struct3 = result.unwrap();
-/// let struct4 = Struct { x: -2, y: "s" };
-/// let crazy = [([Some(&struct3)], struct4, "****".to_string())];
-/// assert_eq!(crazy[..].type_of(), "crazy ****");
 /// ```
-/// The only restriction is that you cannot use different registered types in one `impl` block.
+/// The only restriction is that you cannot use different registered types in one `impl` block or
+/// function.
 /// This will not compile:
 /// ```compile_fail
 /// #[autogen::register]

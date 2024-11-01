@@ -50,13 +50,11 @@ fn trait_generic_arg_as_output() {
     #[autogen::apply]
     impl From<T> for Struct {
         fn from(val: T) -> Struct {
-            {
-                let a: Struct = Struct {
-                    t: val.clone(),
-                    y: val,
-                };
-                a
-            }
+            let a: Struct = Struct {
+                t: val.clone(),
+                y: val,
+            };
+            a
         }
     }
 
