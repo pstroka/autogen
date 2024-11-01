@@ -11,7 +11,7 @@ repository = "https://github.com/pstroka/autogen"
 keywords = ["generics", "types", "impl", "traits", "autogen"]
 
 [dependencies]
-quote = "1.0.36"
-syn = { version = "2.0.74", features = ["full"] }
-proc-macro2 = "1.0.86"
+quote = "1.0.37"
+syn = { version = "2.0.86", features = ["full"] }
+proc-macro2 = "1.0.89"
 try_match = "0.4.2"
