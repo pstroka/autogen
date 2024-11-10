@@ -82,19 +82,23 @@ fn pointer() {
 #[test]
 fn tuple() {
     #[autogen::apply]
-    impl Trait for (&'static str, Struct, Struct) {
+    impl Trait for (&'static str, Struct, Struct, Struct<f64, String>) {
         fn type_of(&self) -> String {
             format!(
-                "tuple {}, {:?}, {:?}, {:?}, {:?}",
-                self.0, self.1.x, self.1.y, self.2.x, self.2.y
+                "tuple {}, {:?}, {:?}, {:?}, {:?}, {}, {}",
+                self.0, self.1.x, self.1.y, self.2.x, self.2.y, self.3.x, self.3.y
             )
         }
     }
 
     let s1 = Struct { x: 3, y: 5.2 };
     let s2 = Struct { x: 4, y: 7.6 };
-    let tuple = ("a", s1, s2);
-    assert_eq!(tuple.type_of(), "tuple a, 3, 5.2, 4, 7.6");
+    let s3 = Struct {
+        x: 4.2,
+        y: "b".to_string(),
+    };
+    let tuple = ("a", s1, s2, s3);
+    assert_eq!(tuple.type_of(), "tuple a, 3, 5.2, 4, 7.6, 4.2, b");
 }
 
 #[test]
@@ -157,19 +161,19 @@ fn custom_id() {
 #[test]
 fn custom_with_multiple_types() {
     #[autogen::register(StructY)]
-    struct Struct<Y: Display> {
+    struct Struct<Y: Debug> {
         y: Y,
     }
 
-    #[autogen::apply(StructY)]
+    #[autogen::apply(id = StructY)]
     impl Trait for (Struct, String) {
         fn type_of(&self) -> String {
-            format!("custom {} {}", self.0.y, self.1)
+            format!("custom {:?} {}", self.0.y, self.1)
         }
     }
-    let s = Struct { y: "y" };
-    let tuple = (s, "z".to_string());
-    assert_eq!(tuple.type_of(), "custom y z");
+    let s = Struct { y: 0 };
+    let tuple = (s, "y".to_string());
+    assert_eq!(tuple.type_of(), "custom 0 y");
 }
 
 #[test]
@@ -185,8 +189,31 @@ fn custom_with_multiple_registered_types() {
             format!("custom {:?} {:?} {}", self.0.x, self.0.y, self.1.z)
         }
     }
-    let s1 = Struct { x: 1, y: 2};
+    let s1 = Struct { x: 1, y: 2 };
     let s2 = Struct2 { z: "z".to_string() };
     let tuple = (s1, s2);
     assert_eq!(tuple.type_of(), "custom 1 2 z");
+}
+
+#[test]
+fn fn_arg() {
+    #[autogen::apply]
+    impl Struct {
+        fn combine_as_string(&self, other: &Struct) -> String {
+            format!("{:?} {:?} - {:?} {:?}", self.x, self.y, other.x, other.y)
+        }
+        fn combine<'a>(&'a self, other: &'a Struct) -> Vec<&'a Struct> {
+            let v: Vec<&'a Struct> = [self, other].into_iter().collect();
+            v
+        }
+    }
+
+    let a = Struct { x: 1, y: 2 };
+    let b = Struct { x: 3, y: 4 };
+    let c = a.combine(&b);
+    assert_eq!(a.combine_as_string(&b), "1 2 - 3 4");
+    assert_eq!(c[0].x, a.x);
+    assert_eq!(c[0].y, a.y);
+    assert_eq!(c[1].x, b.x);
+    assert_eq!(c[1].y, b.y);
 }

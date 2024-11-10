@@ -23,21 +23,25 @@ pub(crate) fn register_generics(item: &Item, custom_id: Option<Ident>) -> Result
     }
     let mut generics_vec = GENERICS.lock().map_err(|_| {
         Error::new(
-            item.span(),
+            Span::call_site(),
             "could not register generics because of previous errors",
         )
     })?;
-    match generics_vec.push(generics) {
-        Some(gen) => {
-            let mut error = Error::new(
-                get_ident(item)?.span(),
-                format!("{} is already registered", gen.id),
-            );
-            error.combine(Error::new(Span::call_site(), "use a different identifier"));
-            Err(error)
-        }
-        None => Ok(item.to_token_stream().into()),
-    }
+    // NOTE: had to disable it for now because the memory is no longer cleared after each
+    // rust-analyzer check, which causes duplicate registrations on every code change
+    // match generics_vec.push(generics) {
+    //     Some(gen) => {
+    //         let mut error = Error::new(
+    //             get_ident(item)?.span(),
+    //             format!("{} is already registered", gen.id),
+    //         );
+    //         error.combine(Error::new(Span::call_site(), "use a different identifier"));
+    //         Err(error)
+    //     }
+    //     None => Ok(item.to_token_stream().into()),
+    // }
+    generics_vec.push(generics);
+    Ok(item.to_token_stream().into())
 }
 
 pub(crate) fn find_generics(ident: &Ident, id: &Ident) -> Result<Option<Generics>> {
