@@ -55,6 +55,10 @@ use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, Ident, Item, 
 /// This macro is used to register the generics of a `struct` or `enum` that can later be applied to
 /// an `impl` block or function with the [apply](macro@apply) macro.
 ///
+/// Optional arguments:
+/// - custom identifier e.g. `#[register(SomeCustomId)]`
+///   \- see [using a custom identifier](macro@register#using-a-custom-identifier)
+///
 /// # Examples
 ///
 /// ```
@@ -80,15 +84,6 @@ use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, Ident, Item, 
 /// let s = Struct { x: 1, y: "abc" };
 /// assert!(s.x_equals(&1));
 /// assert_eq!(s.y(), "abc");
-///
-/// #[autogen::apply]
-/// fn new(x: T, y: &'a R) -> Struct {
-///     Struct { x, y }
-/// }
-///
-/// let s = new(2, "def");
-/// assert!(s.x_equals(&2));
-/// assert_eq!(s.y(), "def");
 ///
 /// #[autogen::register]
 /// enum Enum<T, Y> {
@@ -121,18 +116,42 @@ use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, Ident, Item, 
 /// custom identifier. This can be useful if a type with the same name is already registered in
 /// another module.
 ///
-/// This will not compile because `Name` is already registered.
+/// This will not compile because `Name` is already registered with different generics.
 /// ```compile_fail
 /// #[autogen::register]
 /// struct Name<T: PartialEq> {
 ///     t: T,
 /// }
 ///
-/// mod sub {
-///     #[autogen::register]
-///     pub struct Name<S: FromStr> {
-///         s: S,
+/// #[autogen::apply]
+/// impl Name {
+///     fn t(&self) -> &T {
+///         &self.t
 ///     }
+/// }
+///
+/// mod sub {
+///    use std::str::FromStr;
+///
+///    #[autogen::register]
+///    pub struct Name<S: FromStr, X> {
+///        pub s: S,
+///        pub x: X,
+///    }
+///
+///    #[autogen::apply]
+///    impl Name {
+///        pub fn new(string: &str, x: X) -> Result<Self, S::Err> {
+///            Ok(Name { s: string.parse()?, x })
+///        }
+///    }
+///
+///    #[autogen::apply(X = S)]
+///    impl Name {
+///        pub fn parse(string: &str) -> Result<Self, S::Err> {
+///            Ok(Name { s: string.parse()?, x: string.parse()? })
+///        }
+///    }
 /// }
 /// ```
 ///
@@ -151,29 +170,39 @@ use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, Ident, Item, 
 /// }
 ///
 /// mod sub {
-///     use std::str::FromStr;
+///    use std::str::FromStr;
 ///
-///     #[autogen::register(CustomName)]
-///     pub struct Name<S: FromStr> {
-///         s: S,
-///     }
+///    #[autogen::register(CustomName)]
+///    pub struct Name<S: FromStr, X> {
+///        pub s: S,
+///        pub x: X,
+///    }
 ///
-///     #[autogen::apply(CustomName)]
-///     impl Name {
-///         pub fn parse(string: &str) -> Result<Self, S::Err> {
-///             Ok(Name { s: string.parse()? })
-///         }
-///         pub fn s(&self) -> &S {
-///             &self.s
-///         }
-///     }
+///    #[autogen::apply(CustomName)]
+///    impl Name {
+///        pub fn new(string: &str, x: X) -> Result<Self, S::Err> {
+///            Ok(Name { s: string.parse()?, x })
+///        }
+///    }
+///
+///    #[autogen::apply(id = CustomName, X = S)]
+///    impl Name {
+///        pub fn parse(string: &str) -> Result<Self, S::Err> {
+///            Ok(Name { s: string.parse()?, x: string.parse()? })
+///        }
+///    }
 /// }
 ///
 /// let s1 = Name { t: 64 };
 /// assert_eq!(s1.t(), &64);
 ///
-/// let s2 = sub::Name::<u32>::parse("123").unwrap();
-/// assert_eq!(s2.s(), &123);
+/// let s2 = sub::Name::<u32, i32>::new("123", -5).unwrap();
+/// assert_eq!(s2.s, 123);
+/// assert_eq!(s2.x, -5);
+///
+/// let s3 = sub::Name::<f64, f64>::parse("5.6").unwrap();
+/// assert_eq!(s3.s, 5.6);
+/// assert_eq!(s3.x, 5.6);
 /// ```
 #[proc_macro_attribute]
 pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
@@ -187,9 +216,14 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
     register_generics(&item, custom_id).unwrap_or_else(|err| err.to_compile_error().into())
 }
 
-// TODO: add new examples
 /// This macro is used to apply the generics of a `struct` or `enum` that have been registered with
 /// the [register](macro@register) macro to an `impl` block or function.
+///
+/// Optional arguments:
+/// - custom identifier e.g `#[apply(SomeCustomId)]` or `#[apply(id = SomeCustomId)]` 
+///   \- see [register](macro@register#using-a-custom-identifier) macro docs
+/// - generic type replacements e.g `#[apply(X = Y, Z = String)]`
+///   \- see [generic type replacements](macro@apply#generic-type-replacements)
 ///
 /// # Examples
 ///
@@ -248,6 +282,24 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 ///     l.x == r.x
 /// }
 ///
+/// let l = Struct { x: 2.1, y: &3 };
+/// let r = Struct { x: 2.1, y: &7 };
+/// assert!(same_x(&l, &r));
+///
+/// ```
+/// ## Generic type replacements
+/// You can specify the generic types or replace them with other generics.
+/// ```
+/// #[autogen::register]
+/// struct Struct<'a, T, R: ?Sized>
+/// where
+///     T: PartialEq,
+/// {
+///     x: T,
+///     y: &'a R,
+/// }
+///
+/// // This will expand to impl<'a, T, T> Struct<'a, T, T> where T: PartialEq
 /// #[autogen::apply(R = T)]
 /// impl Struct {
 ///     fn x_equals_y(&self) -> bool {
@@ -258,15 +310,16 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// let s = Struct { x: 1, y: &1 };
 /// assert!(s.x_equals_y());
 ///
+/// // This will expand to impl<'a, String, str> Struct<'a, String, str>
 /// #[autogen::apply(T = String, R = str)]
 /// impl Struct {
 ///     fn as_string(&self) -> String {
-///         format!("{} {}", self.x, self.y)
+///         format!("{}{}", self.x, self.y)
 ///     }
 /// }
 ///
 /// let s = Struct { x: "bo".to_string(), y: "ber" };
-/// assert_eq!(s.as_string(), "bo ber");
+/// assert_eq!(s.as_string(), "bober");
 /// ```
 /// The only restriction is that you cannot use different registered types in one `impl` block or
 /// function.
@@ -287,8 +340,6 @@ pub fn register(args: TokenStream, original: TokenStream) -> TokenStream {
 /// #[autogen::apply]
 /// impl Trait for (Struct1, Struct2) {}
 /// ```
-/// To learn how to apply generics with a custom identifier, see the
-/// [register](macro@register#using-a-custom-identifier) macro docs.
 #[proc_macro_attribute]
 pub fn apply(args: TokenStream, original: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args with Punctuated::<Meta, Comma>::parse_terminated);

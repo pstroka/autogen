@@ -89,3 +89,5 @@ fn replace_where() {
 //     #[autogen::apply(X = X: PartialEq)]
 //     impl Regular {}
 // }
+
+// TODO: replace lifetime generics
