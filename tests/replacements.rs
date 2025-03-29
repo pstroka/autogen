@@ -1,3 +1,5 @@
+#![allow(non_local_definitions)]
+
 #[autogen::register]
 struct Regular<X, Y> {
     x: X,
@@ -23,6 +25,12 @@ where
     y: Y,
 }
 
+// #[autogen::register]
+// struct Lifetime<'a, 'b, X: ?Sized> {
+//     x: &'a X,
+//     y: &'b X,
+// }
+
 #[test]
 fn replace_regular() {
     #[autogen::apply(X = String)]
@@ -38,7 +46,7 @@ fn replace_regular() {
 }
 
 #[test]
-fn replaceme_mixed() {
+fn replace_mixed() {
     #[autogen::apply(Y = X)]
     impl Mixed {
         fn equal(&self) -> bool {
@@ -77,6 +85,7 @@ fn replace_where() {
 }
 
 // TODO: make this work
+// this will probably require to change the replacement type from Ident to Path or GenericArgument
 // #[test]
 // fn replace_with_args() {
 //     #[autogen::apply(X = Vec<String>)]
@@ -84,10 +93,36 @@ fn replace_where() {
 // }
 
 // TODO: make this work
+// this has to work differently
+// - X should not be removed from the list of generics but be replaced with X: PartialEq
+// - X should not be replaced in the list of path arguments
 // #[test]
 // fn replace_with_bounds() {
 //     #[autogen::apply(X = X: PartialEq)]
 //     impl Regular {}
 // }
 
-// TODO: replace lifetime generics
+// TODO: make this work
+// #[test]
+// fn replace_lifetime() {
+//     // #[autogen::apply(X = str, _b = _a)]
+//     impl<'a> Lifetime<'a, 'a, str> {
+//         fn longer(&self) -> &'a str {
+//             if self.x > self.y {
+//                 self.x
+//             } else {
+//                 self.y
+//             }
+//         }
+//     }
+//
+//     let x = "aaa";
+//     let y = "aa";
+//     let longer;
+//     {
+//         let l = Lifetime { x: &x, y: &y };
+//         longer = l.longer();
+//     }
+//
+//     assert_eq!(longer, x);
+// }
