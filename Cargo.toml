@@ -3,7 +3,7 @@ proc-macro = true
 
 [package]
 name = "autogen"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
 description = "Autogen is a set of macros that allows you to automatically apply generics to impl blocks."
