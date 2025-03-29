@@ -61,8 +61,8 @@ impl TryFrom<Punctuated<Meta, Comma>> for Args {
 
         fn try_parse_expr_ident(expr: Expr, error_message: &'static str) -> Result<Ident> {
             match expr {
-                Expr::Path(p) => match p.path.get_ident() {
-                    Some(ident) => Ok(ident.to_owned()),
+                Expr::Path(p) => match p.path.segments.last() {
+                    Some(ident) => Ok(ident.ident.to_owned()),
                     None => Err(Error::new_spanned(p.path, error_message)),
                 },
                 _ => Err(Error::new(expr.span(), error_message)),
