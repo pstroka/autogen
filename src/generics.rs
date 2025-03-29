@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::ToTokens;
-use syn::{parse_str, spanned::Spanned, Error, Generics, Ident, Item, Result};
+use syn::{Error, Generics, Ident, Item, Result, parse_str, spanned::Spanned};
 
 use crate::unique_vec::{UniqueEq, UniqueVec};
 
@@ -55,8 +55,8 @@ pub(crate) fn find_generics(ident: &Ident, id: &Ident) -> Result<Option<Generics
     let ident = ident.to_string();
     Ok(generics_vec
         .iter()
-        .find(|gen| gen.id == id && gen.ident == ident)
-        .map(|gen| gen.into()))
+        .find(|g| g.id == id && g.ident == ident)
+        .map(|g| g.into()))
 }
 
 pub(crate) fn find_ident_by_id(id: &Ident) -> Option<String> {
@@ -64,8 +64,8 @@ pub(crate) fn find_ident_by_id(id: &Ident) -> Option<String> {
     let id = id.to_string();
     generics_vec
         .iter()
-        .find(|gen| gen.id == id)
-        .map(|gen| gen.ident.clone())
+        .find(|g| g.id == id)
+        .map(|g| g.ident.clone())
 }
 
 fn get_ident(item: &Item) -> Result<&Ident> {

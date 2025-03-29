@@ -4,14 +4,14 @@ proc-macro = true
 [package]
 name = "autogen"
 version = "1.0.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 description = "Autogen is a set of macros that allows you to automatically apply generics to impl blocks."
 repository = "https://github.com/pstroka/autogen"
 keywords = ["generics", "types", "impl", "traits", "autogen"]
 
 [dependencies]
-quote = "1.0.37"
-syn = { version = "2.0.86", features = ["full"] }
-proc-macro2 = "1.0.89"
+quote = "1.0.40"
+syn = { version = "2.0.100", features = ["full"] }
+proc-macro2 = "1.0.94"
 try_match = "0.4.2"
